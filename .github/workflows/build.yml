@@ -1,5 +1,8 @@
 name: build
 
+# Manual release builds. Dispatch with the branch/platform/version inputs, e.g.
+# gh workflow run build.yml -R <owner>/JavBoss -f branch=<ref> -f platform=windows-x86_64 -f version=vX.Y.Z
+
 on:
   workflow_dispatch:
     inputs:
