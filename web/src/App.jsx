@@ -35,6 +35,7 @@ import JavQueryEditorModal from '@/features/jav/components/JavQueryEditorModal'
 import { configFlag } from '@/utils/config'
 import VideoScreenshotsModal from '@/features/video/components/VideoScreenshotsModal'
 import PlayerModal from '@/features/playback/components/PlayerModal'
+import OnlineVerificationModal from '@/features/playback/components/OnlineVerificationModal'
 import VideoScrapeSettingsModal from '@/features/video/components/VideoScrapeSettingsModal'
 import DisplaySettings from '@/features/settings/components/DisplaySettings'
 import JavVideoPickerModal from '@/features/jav/components/JavVideoPickerModal'
@@ -267,6 +268,8 @@ export default function App() {
     playerOnline,
     selectPlayerVideo,
     closePlayer,
+    onlineVerificationUrl,
+    closeOnlineVerification,
     playerStartTime,
     screenshotsVideo,
     setScreenshotsVideo,
@@ -792,6 +795,12 @@ export default function App() {
         hotkeys={config?.player_hotkeys}
         showHotkeyHint={configFlag(config?.browser_player_show_hotkey_hint, true)}
         onClose={closePlayer}
+      />
+
+      <OnlineVerificationModal
+        open={Boolean(onlineVerificationUrl)}
+        url={onlineVerificationUrl}
+        onClose={closeOnlineVerification}
       />
 
       <VideoScrapeSettingsModal

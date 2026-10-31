@@ -27,6 +27,12 @@ export default function usePlayback({ showCenterToast, showToast }) {
 
   const [javVideoPickerAction, setJavVideoPickerAction] = useState('play')
 
+  const [onlineVerificationUrl, setOnlineVerificationUrl] = useState('')
+
+  const closeOnlineVerification = useCallback(() => {
+    setOnlineVerificationUrl('')
+  }, [])
+
   const [locationPickerOpen, setLocationPickerOpen] = useState(false)
 
   const [locationPickerVideo, setLocationPickerVideo] = useState(null)
@@ -425,13 +431,21 @@ export default function usePlayback({ showCenterToast, showToast }) {
           }
         )
       } catch (err) {
+        const message = getErrorMessage(err)
+        // A verification-required message carries the provider page; show it in
+        // a dialog so the link can be opened or copied instead of a transient toast.
+        const verification = message.match(/https?:\/\/[^\s，。；、）)]+/)
+        if (verification && message.includes('验证')) {
+          setOnlineVerificationUrl(verification[0])
+          return
+        }
         const hint = isOnlineStreamBridgeReady()
           ? ''
           : zh(
               '（安装 JavBoss 助手扩展，或在 Tampermonkey 中安装「JavBoss 在线片源助手」脚本后可在页面内播放）',
               ' (Install the JavBoss extension or the JavBoss online stream userscript to play in the page)'
             )
-        showCenterToast(`${getErrorMessage(err)}${hint}`)
+        showCenterToast(`${message}${hint}`)
       }
     },
     [openOnlinePlayer, showCenterToast]
@@ -675,6 +689,8 @@ export default function usePlayback({ showCenterToast, showToast }) {
     javVideoPickerOpen,
     javVideoPickerItem,
     javVideoPickerAction,
+    onlineVerificationUrl,
+    closeOnlineVerification,
     locationPickerOpen,
     locationPickerChoices,
     locationPickerAction,
