@@ -294,6 +294,66 @@ func getJavRelatedCover(c *gin.Context) {
 	c.Data(http.StatusOK, contentType, data)
 }
 
+type javResolveByCodeRequest struct {
+	Code     string  `json:"code"`
+	Title    string  `json:"title"`
+	ZhTitle  string  `json:"zh_title"`
+	Rating   float64 `json:"rating"`
+	CoverURL string  `json:"cover_url"`
+}
+
+// resolveJavByCode returns a local JAV record for a code. Recommendation rows
+// that are not in the library are created from the recommendation metadata so
+// they open in the in-app detail modal instead of the external site.
+func resolveJavByCode(c *gin.Context) {
+	var req javResolveByCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondLocalizedError(c, http.StatusBadRequest, "请求无效", "Invalid request")
+		return
+	}
+	code := strings.ToUpper(strings.TrimSpace(req.Code))
+	if code == "" {
+		respondLocalizedError(c, http.StatusBadRequest, "番号不能为空", "JAV code is required")
+		return
+	}
+	ctx := c.Request.Context()
+	existing, err := dbpkg.Default().GetJavByCode(ctx, code)
+	if err != nil {
+		logging.Error("resolve jav by code %s: %v", code, err)
+		respondLocalizedError(c, http.StatusInternalServerError, "加载 JAV 失败", "Failed to load JAV")
+		return
+	}
+	if existing != nil {
+		c.JSON(http.StatusOK, gin.H{"id": existing.ID, "code": existing.Code, "created": false})
+		return
+	}
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		title = code
+	}
+	info := &scrape.JavInfo{Code: code, Title: title, Rating: req.Rating, Provider: scrape.ProviderJavDBAPI}
+	record, err := dbpkg.Default().SaveJavInfo(ctx, info)
+	if err != nil {
+		// A concurrent click may have created the record already.
+		if concurrent, lookupErr := dbpkg.Default().GetJavByCode(ctx, code); lookupErr == nil && concurrent != nil {
+			c.JSON(http.StatusOK, gin.H{"id": concurrent.ID, "code": concurrent.Code, "created": false})
+			return
+		}
+		logging.Error("create jav for code %s: %v", code, err)
+		respondLocalizedError(c, http.StatusInternalServerError, "创建 JAV 失败", "Failed to create JAV")
+		return
+	}
+	if zhTitle := strings.TrimSpace(req.ZhTitle); zhTitle != "" {
+		if _, err := dbpkg.Default().UpdateJav(ctx, record.ID, dbpkg.JavUpdateInput{ZhTitle: &zhTitle}, nil); err != nil {
+			logging.Error("set zh title for jav id=%d: %v", record.ID, err)
+		}
+	}
+	if coverURL := strings.TrimSpace(req.CoverURL); coverURL != "" {
+		downloadJavCoverFromURL(ctx, code, coverURL)
+	}
+	c.JSON(http.StatusOK, gin.H{"id": record.ID, "code": record.Code, "created": true})
+}
+
 func listSimilarJavs(c *gin.Context) {
 	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
 	if err != nil || id <= 0 {
@@ -338,9 +398,10 @@ type javSimilarFreshItem struct {
 }
 
 type javSimilarFreshEntry struct {
-	Day       string
-	Items     []javSimilarFreshItem
-	FetchedAt time.Time
+	SourceID  int64                 `json:"source_id"`
+	Day       string                `json:"day"`
+	Items     []javSimilarFreshItem `json:"items"`
+	FetchedAt time.Time             `json:"fetched_at"`
 }
 
 var (
@@ -361,6 +422,7 @@ func listSimilarJavsFresh(c *gin.Context) {
 	}
 	refresh := strings.EqualFold(strings.TrimSpace(c.Query("refresh")), "1") ||
 		strings.EqualFold(strings.TrimSpace(c.Query("refresh")), "true")
+	loadSimilarCacheFromDisk()
 
 	source, err := dbpkg.Default().GetJav(c.Request.Context(), id, nil)
 	if err != nil {
@@ -394,6 +456,7 @@ func listSimilarJavsFresh(c *gin.Context) {
 	cancel()
 	if err == nil && len(related) > 0 {
 		entry := javSimilarFreshEntry{
+			SourceID:  id,
 			Day:       day,
 			Items:     mapJavSimilarFresh(c.Request.Context(), related),
 			FetchedAt: time.Now(),
@@ -402,6 +465,7 @@ func listSimilarJavsFresh(c *gin.Context) {
 		javSimilarFreshToday[id] = entry
 		javSimilarFreshLast[id] = entry
 		javSimilarFreshMu.Unlock()
+		persistSimilarCache()
 		respondJavSimilarFresh(c, entry, includeLocal, false, false, "")
 		return
 	}

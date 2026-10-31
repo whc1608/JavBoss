@@ -5,7 +5,7 @@ import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded'
 import JavCoverCropModal from '@/features/jav/components/JavCoverCropModal'
 import useJavItemActions from '@/features/jav/hooks/useJavItemActions'
 import useSimilarIncludeLocal from '@/features/jav/hooks/useSimilarIncludeLocal'
-import { fetchJavSimilar, fetchJavSimilarFresh } from '@/features/jav/api'
+import { fetchJavSimilar, fetchJavSimilarFresh, resolveJavByCode } from '@/features/jav/api'
 import { JavDetailNavigationContext } from '@/navigation/javDetailNavigation'
 import { getErrorMessage } from '@/utils/errors'
 import { JavCoverImage, IdolTagList, JavTagList } from '@/features/jav/components/JavCardTags'
@@ -881,21 +881,45 @@ export default function JavCard(props) {
                           ? Number(row.rating)
                           : 0
                       const hasItem = Number(row.id) > 0
-                      const openSimilarRow = () => {
-                        setSimilarAnchorEl(null)
-                        if (hasItem) {
-                          openJavDetail?.({ id: row.id }, { cache: false })
-                        } else if (javdbHref) {
-                          window.open(javdbHref, '_blank', 'noopener,noreferrer')
-                        }
-                      }
                       const externalCover = String(row.cover_url || '')
                       const proxiedCover = externalCover
                         ? `/javrelated/cover?url=${encodeURIComponent(externalCover)}`
                         : ''
                       const localCover = `/jav/${encodeURIComponent(row.code)}/cover`
-                      const coverSrc = hasItem ? localCover : proxiedCover || localCover
-                      const coverFallback = hasItem ? proxiedCover : localCover
+                      const coverSrc = proxiedCover || localCover
+                      const coverFallback = localCover
+                      const openSimilarRow = async () => {
+                        setSimilarAnchorEl(null)
+                        if (hasItem) {
+                          openJavDetail?.({ id: row.id }, { cache: false })
+                          return
+                        }
+                        if (!row.code) {
+                          if (javdbHref) {
+                            window.open(javdbHref, '_blank', 'noopener,noreferrer')
+                          }
+                          return
+                        }
+                        try {
+                          const resolved = await resolveJavByCode({
+                            code: row.code,
+                            title: row.title,
+                            zh_title: row.zh_title,
+                            rating: row.rating,
+                            cover_url: externalCover,
+                          })
+                          const resolvedID = Number(resolved?.id)
+                          if (resolvedID > 0) {
+                            openJavDetail?.({ id: resolvedID }, { cache: false })
+                            return
+                          }
+                        } catch {
+                          // Fall back to the external page when the local record cannot be created.
+                        }
+                        if (javdbHref) {
+                          window.open(javdbHref, '_blank', 'noopener,noreferrer')
+                        }
+                      }
                       return (
                         <div
                           key={row.id || row.code}

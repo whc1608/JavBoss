@@ -1,6 +1,16 @@
 import { apiFetch, jsonHeaders, apiError } from '@/api/client'
 import { zh } from '@/utils/i18n'
 
+export async function resolveJavByCode(payload) {
+  const res = await apiFetch('/jav/by-code', {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw await apiError(res)
+  return res.json()
+}
+
 export function translateJavTitles(ids, options) {
   return translateTexts('/jav/title-translation/items', ids, options)
 }

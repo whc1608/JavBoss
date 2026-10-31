@@ -341,10 +341,10 @@ func (p *JavDBAPIClient) RelatedMoviesByCode(ctx context.Context, code string, l
 	detailClient := &JavDBAPIClient{
 		httpClient: p.httpClient,
 		baseURL:    p.baseURL,
-		limiter:    ratelimit.New(120 * time.Millisecond),
+		limiter:    ratelimit.New(80 * time.Millisecond),
 	}
 	detailClient.init()
-	sem := make(chan struct{}, 4)
+	sem := make(chan struct{}, 6)
 	var wait sync.WaitGroup
 	var mu sync.Mutex
 	out := make([]metadata.RelatedMovie, 0, len(relatives))

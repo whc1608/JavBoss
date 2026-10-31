@@ -32,6 +32,18 @@ func getJavCover(c *gin.Context) {
 	respondLocalizedError(c, http.StatusNotFound, "JAV 封面不存在", "JAV cover was not found")
 }
 
+// downloadJavCoverFromURL caches a cover provided by a recommendation payload
+// so the detail modal shows it immediately after the item is created.
+func downloadJavCoverFromURL(ctx context.Context, code, coverURL string) {
+	cfg := common.CurrentConfig()
+	if cfg == nil {
+		return
+	}
+	downloadCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_ = cover.DownloadFromURL(downloadCtx, cfg.JavCoverDir, code, coverURL)
+}
+
 func updateJavCover(c *gin.Context) {
 	code := strings.TrimSpace(c.Param("code"))
 	cfg := common.CurrentConfig()
