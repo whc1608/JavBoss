@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JavBoss 在线片源助手
 // @namespace    https://github.com/whc1608/JavBoss
-// @version      1.2.2
+// @version      1.3.0
 // @description  为 JavBoss 页面解析并播放在线片源，无需安装浏览器扩展
 // @updateURL    http://localhost:8655/javboss-online.user.js
 // @downloadURL  http://localhost:8655/javboss-online.user.js
@@ -9,11 +9,19 @@
 // @match        http://127.0.0.1/*
 // @match        https://localhost/*
 // @match        https://127.0.0.1/*
+// @match        https://missav123.com/*
+// @match        https://www.missav123.com/*
+// @match        https://123av.com/*
 // @connect      missav123.com
 // @connect      123av.com
 // @connect      *
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_addValueChangeListener
+// @grant        GM_removeValueChangeListener
+// @grant        GM_openInTab
 // @run-at       document-start
 // ==/UserScript==
 
@@ -23,6 +31,9 @@
   const BRIDGE_VERSION = 1
   const ONLINE_CACHE_TTL = 10 * 60 * 1000
   const REQUEST_TIMEOUT = 30000
+  const TAB_REQUEST_KEY = 'javbossOnlineTabRequest'
+  const TAB_RESPONSE_KEY = 'javbossOnlineTabResponse'
+  const TAB_REQUEST_TTL = 5 * 60 * 1000
   const MISSING_PERMISSION =
     '在线片源脚本无法访问视频站点，请在 Tampermonkey 中允许该脚本连接 missav123.com 与 123av.com'
 
@@ -378,6 +389,20 @@
       errors.push(message)
     }
 
+    // Script requests are challenged, so fall back to a provider tab that
+    // loads with the real browser session and reports the stream back.
+    try {
+      const source = await resolveViaTab(code)
+      if (source) {
+        trace('标签页提取: 成功')
+        resolveCache.set(key, { source, expiresAt: Date.now() + ONLINE_CACHE_TTL })
+        return source
+      }
+      trace('标签页提取: 未获取到片源')
+    } catch (error) {
+      trace(`标签页提取: ${String(error?.message || error || '')}`)
+    }
+
     if (challenged) throw new Error(challengeError(challengeURL))
     if (errors.some((message) => message === 'Failed to fetch')) throw new Error(MISSING_PERMISSION)
     throw new Error('未找到可用的在线片源')
@@ -404,6 +429,170 @@
     }
   }
 
+  function isProviderHost() {
+    return /missav123\.com$/i.test(location.hostname) || /123av\.com$/i.test(location.hostname)
+  }
+
+  function providerSlug() {
+    const parts = location.pathname.split('/').filter(Boolean)
+    const last = String(parts[parts.length - 1] || '').toLowerCase()
+    return last.replace(/-chinese-subtitle$/i, '').replace(/-uncensored-leaked$/i, '')
+  }
+
+  function providerPageChallenged() {
+    const html = String(document.documentElement?.innerHTML || '')
+    return (
+      isChallengePage(html) || /Just a moment|Checking your browser/i.test(document.title || '')
+    )
+  }
+
+  function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  async function extractProviderSource(pageURL) {
+    const slug = providerSlug()
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      if (providerPageChallenged()) return { challenged: true }
+      const html = String(document.documentElement?.innerHTML || '')
+      if (/missav123\.com$/i.test(location.hostname)) {
+        const url = parseMissavDocument(html, slug)
+        if (url) {
+          return {
+            source: {
+              provider: 'MissAV',
+              page_url: pageURL,
+              stream_url: url,
+              stream_type: streamTypeOf(url),
+              referer: pageURL,
+              kind: 'stream',
+            },
+          }
+        }
+      } else {
+        const xData =
+          document.querySelector('.watch__main[x-data], .watch__main')?.getAttribute('x-data') ||
+          ''
+        const entries = decodePlayerEntries(xData, pageURL)
+        const player = entries.find((entry) => String(entry.number) === '1') || entries[0]
+        if (player?.url) {
+          let media = null
+          try {
+            const response = await gmRequest(player.url, 'text', {
+              Referer: pageURL,
+              Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+            })
+            if (response.status >= 200 && response.status < 300) {
+              media = mediaFromText(String(response.responseText || ''), player.url)
+            }
+          } catch {
+            media = null
+          }
+          if (media) {
+            return {
+              source: {
+                provider: '123AV',
+                page_url: pageURL,
+                stream_url: media.url,
+                stream_type: media.type,
+                referer: pageURL,
+                kind: 'stream',
+              },
+            }
+          }
+          return {
+            source: {
+              provider: '123AV',
+              page_url: pageURL,
+              iframe_url: player.url,
+              stream_type: 'iframe',
+              referer: pageURL,
+              kind: 'stream',
+            },
+          }
+        }
+      }
+      await wait(500)
+    }
+    return { source: null }
+  }
+
+  // Provider tabs load the page with the browser session, which is the only
+  // way past Cloudflare when script requests are challenged.
+  async function handleProviderTabRequest() {
+    if (!isProviderHost() || typeof GM_getValue !== 'function') return
+    const request = GM_getValue(TAB_REQUEST_KEY, null)
+    if (!request?.id || Date.now() - Number(request.at || 0) > TAB_REQUEST_TTL) return
+    const slug = providerSlug()
+    if (!slug || slug !== normalizeCode(request.code)) return
+    if (providerPageChallenged()) return
+    const outcome = await extractProviderSource(location.href)
+    if (outcome?.challenged) return
+    const source = outcome?.source || null
+    GM_setValue(TAB_RESPONSE_KEY, {
+      id: request.id,
+      source,
+      error: source ? '' : '未找到可用的在线片源',
+      at: Date.now(),
+    })
+  }
+
+  function resolveViaTab(code) {
+    const slug = normalizeCode(code)
+    if (!slug) return Promise.resolve(null)
+    const requestId = `jb-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    try {
+      GM_setValue(TAB_REQUEST_KEY, { id: requestId, code, at: Date.now() })
+    } catch {
+      return Promise.resolve(null)
+    }
+    let tab = null
+    try {
+      tab = GM_openInTab(`https://missav123.com/cn/${slug}`, {
+        active: true,
+        insert: true,
+        setParent: true,
+      })
+    } catch {
+      tab = null
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false
+      let listenerId = null
+      const finish = (fn, value) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        try {
+          if (typeof GM_removeValueChangeListener === 'function' && listenerId) {
+            GM_removeValueChangeListener(listenerId)
+          }
+        } catch {
+          // ignore listener cleanup failures
+        }
+        try {
+          tab?.close?.()
+        } catch {
+          // ignore tab cleanup failures
+        }
+        fn(value)
+      }
+      const timer = setTimeout(
+        () => finish(reject, new Error('片源标签页等待超时，请重试')),
+        120000
+      )
+      try {
+        listenerId = GM_addValueChangeListener(TAB_RESPONSE_KEY, (_name, _old, value) => {
+          if (!value || value.id !== requestId) return
+          if (value.error) finish(reject, new Error(value.error))
+          else finish(resolve, value.source || null)
+        })
+      } catch {
+        finish(reject, new Error('无法监听片源标签页'))
+      }
+    })
+  }
+
   async function fetchResource(url, responseType, headers = {}) {
     const target = validHttpURL(url)
     if (!target) return { ok: false, error: '无效的视频流地址' }
@@ -427,17 +616,22 @@
     return result
   }
 
-  pageWindow.__JAVBOSS_ONLINE_BRIDGE__ = {
-    version: BRIDGE_VERSION,
-    resolve: (code) => resolveOnlineStream(code),
-    fetchResource: (url, responseType, headers) => fetchResource(url, responseType, headers),
-    debug: async (code) => {
-      try {
-        const source = await resolveOnlineStream(code)
-        return { source, trace: debugTrace }
-      } catch (error) {
-        return { error: String(error?.message || error || ''), trace: debugTrace }
-      }
-    },
+  if (isProviderHost()) {
+    // Provider tabs only answer pending extraction requests from JavBoss.
+    handleProviderTabRequest().catch(() => {})
+  } else {
+    pageWindow.__JAVBOSS_ONLINE_BRIDGE__ = {
+      version: BRIDGE_VERSION,
+      resolve: (code) => resolveOnlineStream(code),
+      fetchResource: (url, responseType, headers) => fetchResource(url, responseType, headers),
+      debug: async (code) => {
+        try {
+          const source = await resolveOnlineStream(code)
+          return { source, trace: debugTrace }
+        } catch (error) {
+          return { error: String(error?.message || error || ''), trace: debugTrace }
+        }
+      },
+    }
   }
 })()
