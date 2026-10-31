@@ -12,7 +12,7 @@ import { zh } from '@/utils/i18n'
 import { getJavDisplayTitle } from '@/utils/jav'
 import { preferChineseTitle } from '@/features/jav/titleTranslation'
 import { useStore } from '@/store'
-import { Rating, Popper, IconButton, ClickAwayListener } from '@mui/material'
+import { Rating, Popper, IconButton, ClickAwayListener, Switch } from '@mui/material'
 import FavoriteRoundedIcon from '@mui/icons-material/FavoriteRounded'
 import FavoriteBorderRoundedIcon from '@mui/icons-material/FavoriteBorderRounded'
 import RemoveCircleOutlineRoundedIcon from '@mui/icons-material/RemoveCircleOutlineRounded'
@@ -61,6 +61,7 @@ export default function JavCard(props) {
   const translateTitle = useStore((state) => preferChineseTitle(state.config))
   const [similarAnchorEl, setSimilarAnchorEl] = useState(null)
   const [similarItems, setSimilarItems] = useState(null)
+  const [similarIncludeLocal, setSimilarIncludeLocal] = useState(true)
   const [similarLoading, setSimilarLoading] = useState(false)
   const [similarError, setSimilarError] = useState('')
   const similarCloseTimerRef = useRef(null)
@@ -76,6 +77,21 @@ export default function JavCard(props) {
       setSimilarAnchorEl(null)
     }, 250)
   }
+  const loadSimilar = async (includeLocal) => {
+    const javID = Number(props.item?.id)
+    if (!Number.isFinite(javID) || javID <= 0) return
+    setSimilarLoading(true)
+    setSimilarError('')
+    try {
+      const data = await fetchJavSimilar(javID, { includeLocal })
+      setSimilarItems(Array.isArray(data?.items) ? data.items : [])
+    } catch (error) {
+      setSimilarItems([])
+      setSimilarError(getErrorMessage(error))
+    } finally {
+      setSimilarLoading(false)
+    }
+  }
   const handleToggleSimilar = async (event) => {
     event.stopPropagation()
     clearSimilarCloseTimer()
@@ -85,18 +101,14 @@ export default function JavCard(props) {
     }
     setSimilarAnchorEl(event.currentTarget)
     if (similarItems || similarLoading) return
-    const javID = Number(props.item?.id)
-    if (!Number.isFinite(javID) || javID <= 0) return
-    setSimilarLoading(true)
-    setSimilarError('')
-    try {
-      const data = await fetchJavSimilar(javID)
-      setSimilarItems(Array.isArray(data?.items) ? data.items : [])
-    } catch (error) {
-      setSimilarError(getErrorMessage(error))
-    } finally {
-      setSimilarLoading(false)
-    }
+    await loadSimilar(similarIncludeLocal)
+  }
+  const handleSimilarIncludeLocalChange = (event) => {
+    const includeLocal = event.target.checked
+    setSimilarIncludeLocal(includeLocal)
+    if (!similarAnchorEl) return
+    setSimilarItems(null)
+    void loadSimilar(includeLocal)
   }
   const coverButtonSizeClassName = portrait ? 'h-7 w-7' : 'h-8 w-8'
   const coverSmallButtonSizeClassName = portrait ? 'h-6 w-6' : 'h-7 w-7'
@@ -750,13 +762,25 @@ export default function JavCard(props) {
                 onMouseEnter={clearSimilarCloseTimer}
                 onMouseLeave={scheduleSimilarClose}
               >
-                <div className="mb-1 flex items-center justify-between px-1">
-                  <span className="text-xs font-semibold text-gray-600">
+                <div className="mb-1 flex items-center justify-between gap-2 px-1">
+                  <span className="shrink-0 text-xs font-semibold text-gray-600">
                     {zh('相似推荐', 'Similar recommendations')}
                   </span>
-                  <span className="text-[11px] text-gray-400">
-                    {zh('按评分排序', 'Sorted by rating')}
-                  </span>
+                  <label
+                    className="flex cursor-pointer items-center gap-1 text-[11px] text-gray-500"
+                    title={zh(
+                      '推荐内容是否包含已在本地仓库的作品',
+                      'Include items already in the local library'
+                    )}
+                  >
+                    <Switch
+                      size="small"
+                      checked={similarIncludeLocal}
+                      onChange={handleSimilarIncludeLocalChange}
+                      inputProps={{ 'aria-label': zh('包含本地已有', 'Include local items') }}
+                    />
+                    {zh('含本地', 'Include local')}
+                  </label>
                 </div>
                 {similarLoading ? (
                   <div className="px-1 py-3 text-center text-xs text-gray-500">

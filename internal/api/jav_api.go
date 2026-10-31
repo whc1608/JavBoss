@@ -255,7 +255,11 @@ func listSimilarJavs(c *gin.Context) {
 	if limit > 5 {
 		limit = 5
 	}
-	items, err := dbpkg.Default().ListSimilarJavs(c.Request.Context(), id, limit)
+	includeLocal := true
+	if raw := strings.TrimSpace(c.Query("include_local")); raw != "" {
+		includeLocal = raw == "1" || strings.EqualFold(raw, "true")
+	}
+	items, err := dbpkg.Default().ListSimilarJavs(c.Request.Context(), id, limit, includeLocal)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			respondLocalizedError(c, http.StatusNotFound, "JAV 作品不存在", "JAV item was not found")

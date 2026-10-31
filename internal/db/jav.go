@@ -174,8 +174,9 @@ type JavSimilarItem struct {
 }
 
 // ListSimilarJavs recommends items sharing idols, series, studio or tags.
-// Relation strength ranks first; provider rating breaks ties.
-func (store *Store) ListSimilarJavs(ctx context.Context, javID int64, limit int) ([]JavSimilarItem, error) {
+// Relation strength ranks first; provider rating breaks ties. When
+// includeLocal is false, items with local video files are excluded.
+func (store *Store) ListSimilarJavs(ctx context.Context, javID int64, limit int, includeLocal bool) ([]JavSimilarItem, error) {
 	if javID <= 0 {
 		return nil, errors.New("jav id must be positive")
 	}
@@ -232,11 +233,15 @@ func (store *Store) ListSimilarJavs(ctx context.Context, javID int64, limit int)
 		return []JavSimilarItem{}, nil
 	}
 
+	innerWhere := "WHERE j.id <> ?"
+	if !includeLocal {
+		innerWhere += " AND NOT EXISTS (SELECT 1 FROM video_location vl WHERE vl.jav_id = j.id)"
+	}
 	query := `SELECT similar.id, similar.code, similar.title, similar.zh_title, similar.rating, similar.favorite_rating
 FROM (
   SELECT j.id, j.code, j.title, j.zh_title, j.rating, j.favorite_rating, (` + strings.Join(scoreParts, " + ") + `) AS score
   FROM jav j
-  WHERE j.id <> ?
+  ` + innerWhere + `
 ) AS similar
 WHERE similar.score > 0
 ORDER BY similar.score DESC, similar.rating DESC, similar.favorite_rating DESC, similar.id DESC

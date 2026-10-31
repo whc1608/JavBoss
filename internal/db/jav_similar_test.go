@@ -84,7 +84,7 @@ func TestListSimilarJavsScoresAndOrdersByRating(t *testing.T) {
 		}
 	}
 
-	items, err := deps.store.ListSimilarJavs(ctx, source.ID, 5)
+	items, err := deps.store.ListSimilarJavs(ctx, source.ID, 5, true)
 	if err != nil {
 		t.Fatalf("list similar javs: %v", err)
 	}
@@ -107,12 +107,41 @@ func TestListSimilarJavsScoresAndOrdersByRating(t *testing.T) {
 		t.Fatalf("unexpected zh title for first item: %q", items[0].ZhTitle)
 	}
 
-	limited, err := deps.store.ListSimilarJavs(ctx, source.ID, 2)
+	limited, err := deps.store.ListSimilarJavs(ctx, source.ID, 2, true)
 	if err != nil {
 		t.Fatalf("list limited similar javs: %v", err)
 	}
 	if got := []string{limited[0].Code, limited[1].Code}; !reflect.DeepEqual(got, []string{"SIM-003", "SIM-002"}) {
 		t.Fatalf("limited codes = %v, want [SIM-003 SIM-002]", got)
+	}
+
+	var localCandidate models.Jav
+	if err := gdb.Where("code = ?", "SIM-003").First(&localCandidate).Error; err != nil {
+		t.Fatalf("load local candidate: %v", err)
+	}
+	directory := models.Directory{Path: t.TempDir()}
+	video := models.Video{Fingerprint: "similar-local"}
+	if err := gdb.Create(&directory).Error; err != nil {
+		t.Fatalf("create directory: %v", err)
+	}
+	if err := gdb.Create(&video).Error; err != nil {
+		t.Fatalf("create video: %v", err)
+	}
+	if err := gdb.Create(&models.VideoLocation{
+		VideoID:      video.ID,
+		DirectoryID:  directory.ID,
+		RelativePath: "similar-local.mp4",
+		Filename:     "similar-local.mp4",
+		JavID:        &localCandidate.ID,
+	}).Error; err != nil {
+		t.Fatalf("create video location: %v", err)
+	}
+	withoutLocal, err := deps.store.ListSimilarJavs(ctx, source.ID, 5, false)
+	if err != nil {
+		t.Fatalf("list similar javs without local: %v", err)
+	}
+	if len(withoutLocal) == 0 || withoutLocal[0].Code != "SIM-002" {
+		t.Fatalf("local item not excluded: %#v", withoutLocal)
 	}
 }
 
@@ -129,7 +158,7 @@ func TestListSimilarJavsReturnsEmptyWithoutRelations(t *testing.T) {
 		}
 	}
 
-	items, err := deps.store.ListSimilarJavs(ctx, source.ID, 5)
+	items, err := deps.store.ListSimilarJavs(ctx, source.ID, 5, true)
 	if err != nil {
 		t.Fatalf("list similar javs: %v", err)
 	}

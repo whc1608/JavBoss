@@ -192,9 +192,10 @@ export async function fetchJavItem(id) {
   return res.json()
 }
 
-export async function fetchJavSimilar(id, { limit = 5 } = {}) {
+export async function fetchJavSimilar(id, { limit = 5, includeLocal = true } = {}) {
   const params = new URLSearchParams()
   params.set('limit', String(limit))
+  params.set('include_local', includeLocal ? '1' : '0')
   const res = await apiFetch(`/jav/items/${encodeURIComponent(id)}/similar?${params.toString()}`, {
     cache: 'no-store',
   })
