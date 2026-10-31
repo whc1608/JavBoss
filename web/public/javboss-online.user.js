@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JavBoss 在线片源助手
 // @namespace    https://github.com/whc1608/JavBoss
-// @version      1.3.0
+// @version      1.3.1
 // @description  为 JavBoss 页面解析并播放在线片源，无需安装浏览器扩展
 // @updateURL    http://localhost:8655/javboss-online.user.js
 // @downloadURL  http://localhost:8655/javboss-online.user.js
@@ -156,6 +156,7 @@
         timeout: REQUEST_TIMEOUT,
         responseType,
         anonymous: false,
+        withCredentials: true,
         headers,
         referer: extraHeaders.Referer || undefined,
         onload: resolve,
@@ -343,7 +344,7 @@
     const errors = []
     for (const attempt of resolveAttempts(code)) {
       try {
-        const html = await fetchText(attempt.pageURL, { Referer: attempt.pageURL })
+        const html = await fetchText(attempt.pageURL)
         const url = attempt.parse(html)
         if (!url) {
           trace(`${attempt.provider} ${attempt.pageURL}: 页面已加载但未解析到播放地址`)
