@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JavBoss 在线片源助手
 // @namespace    https://github.com/whc1608/JavBoss
-// @version      1.3.2
+// @version      1.4.0
 // @description  为 JavBoss 页面解析并播放在线片源，无需安装浏览器扩展
 // @updateURL    http://localhost:8655/javboss-online.user.js
 // @downloadURL  http://localhost:8655/javboss-online.user.js
@@ -12,8 +12,11 @@
 // @match        https://missav123.com/*
 // @match        https://www.missav123.com/*
 // @match        https://123av.com/*
+// @match        https://www.javlibrary.com/*
+// @match        https://javlibrary.com/*
 // @connect      missav123.com
 // @connect      123av.com
+// @connect      www.javlibrary.com
 // @connect      *
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
@@ -34,6 +37,11 @@
   const TAB_REQUEST_KEY = 'javbossOnlineTabRequest'
   const TAB_RESPONSE_KEY = 'javbossOnlineTabResponse'
   const TAB_REQUEST_TTL = 5 * 60 * 1000
+  const JL_REQUEST_KEY = 'javbossJlRatingRequest'
+  const JL_RESPONSE_KEY = 'javbossJlRatingResponse'
+  const JL_CACHE_PREFIX = 'javbossJlRating:'
+  const JL_CACHE_TTL = 7 * 24 * 60 * 60 * 1000
+  const JL_TAB_TIMEOUT = 90000
   const MISSING_PERMISSION =
     '在线片源脚本无法访问视频站点，请在 Tampermonkey 中允许该脚本连接 missav123.com 与 123av.com'
 
@@ -534,6 +542,191 @@
     })
   }
 
+  function isJavLibraryHost() {
+    return /javlibrary\.com$/i.test(location.hostname)
+  }
+
+  function normalizeRating(value) {
+    const score = Number(value)
+    if (!Number.isFinite(score) || score <= 0) return null
+    const normalized = score > 5 && score <= 10 ? score / 2 : score
+    if (normalized <= 0 || normalized > 5) return null
+    return Math.round(normalized * 10) / 10
+  }
+
+  function parseJavLibraryRating() {
+    const chunks = []
+    for (const selector of ['#video_rating', '.score', '#video_info', '.video_info']) {
+      try {
+        for (const el of document.querySelectorAll(selector)) {
+          const text = String(el.textContent || '').trim()
+          if (text) chunks.push(text)
+        }
+      } catch {
+        // ignore selector errors
+      }
+    }
+    const text = chunks.join(' ')
+    const patterns = [
+      /(?:rating|評分|评分|評價)[^0-9]{0,20}(\d+(?:\.\d+)?)/i,
+      /\((\d+(?:\.\d+)?)\)/,
+      /(\d+(?:\.\d+)?)\s*\/\s*(?:5|10)/,
+    ]
+    for (const pattern of patterns) {
+      const match = text.match(pattern)
+      if (!match) continue
+      const score = normalizeRating(match[1])
+      if (score !== null) return score
+    }
+    return null
+  }
+
+  function javLibraryPageCode(codes) {
+    const heading = String(
+      document.querySelector('#video_title, h3')?.textContent || ''
+    ).toUpperCase()
+    const fromHeading = codes.filter((code) => heading.includes(code))
+    if (fromHeading.length === 1) return fromHeading[0]
+    const body = String(document.body?.innerText || '').toUpperCase()
+    const fromBody = codes.filter((code) => body.includes(code))
+    return fromBody.length === 1 ? fromBody[0] : ''
+  }
+
+  // JavLibrary ratings are only reachable with the browser session, so the
+  // rating tab walks the pending codes one page at a time.
+  function handleJavLibraryTabRequest() {
+    if (!isJavLibraryHost() || typeof GM_getValue !== 'function') return
+    const request = GM_getValue(JL_REQUEST_KEY, null)
+    if (!request?.id || Date.now() - Number(request.at || 0) > TAB_REQUEST_TTL) return
+    if (providerPageChallenged()) return
+    const run = () => {
+      window.setTimeout(() => {
+        const codes = Array.isArray(request.codes) ? request.codes : []
+        const results = { ...(request.results || {}) }
+        const visited = { ...(request.visited || {}) }
+        const pendingCodes = codes.filter((code) => !visited[code])
+        if (!pendingCodes.length) return
+        const code = javLibraryPageCode(pendingCodes) || pendingCodes[0]
+        const score = parseJavLibraryRating()
+        if (score !== null) results[code] = score
+        visited[code] = true
+        const remaining = codes.filter((item) => !visited[item])
+        if (remaining.length > 0) {
+          GM_setValue(JL_REQUEST_KEY, { ...request, results, visited, at: request.at })
+          location.href = `https://www.javlibrary.com/cn/vl_searchbyid.php?keyword=${encodeURIComponent(remaining[0])}`
+          return
+        }
+        GM_setValue(JL_RESPONSE_KEY, {
+          id: request.id,
+          ratings: results,
+          error: '',
+          at: Date.now(),
+        })
+      }, 600)
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', run, { once: true })
+    } else {
+      run()
+    }
+  }
+
+  function cachedJavLibraryRating(code) {
+    if (typeof GM_getValue !== 'function') return null
+    try {
+      const entry = GM_getValue(JL_CACHE_PREFIX + code, null)
+      if (!entry || Date.now() - Number(entry.at || 0) > JL_CACHE_TTL) return null
+      return normalizeRating(entry.score)
+    } catch {
+      return null
+    }
+  }
+
+  function storeJavLibraryRating(code, score) {
+    if (typeof GM_setValue !== 'function') return
+    try {
+      GM_setValue(JL_CACHE_PREFIX + code, { score, at: Date.now() })
+    } catch {
+      // ignore cache write failures
+    }
+  }
+
+  function resolveJavLibraryRatings(rawCodes) {
+    const codes = [
+      ...new Set(
+        (rawCodes || [])
+          .map((code) => normalizeCode(code).toUpperCase())
+          .filter(Boolean)
+      ),
+    ]
+    const ratings = {}
+    const pending = []
+    for (const code of codes) {
+      const cached = cachedJavLibraryRating(code)
+      if (cached !== null) ratings[code] = cached
+      else pending.push(code)
+    }
+    if (!pending.length || typeof GM_openInTab !== 'function') return Promise.resolve(ratings)
+
+    const requestId = `jbjl-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    try {
+      GM_setValue(JL_REQUEST_KEY, {
+        id: requestId,
+        codes: pending,
+        results: {},
+        visited: {},
+        at: Date.now(),
+      })
+    } catch {
+      return Promise.resolve(ratings)
+    }
+    let tab = null
+    try {
+      tab = GM_openInTab(
+        `https://www.javlibrary.com/cn/vl_searchbyid.php?keyword=${encodeURIComponent(pending[0])}`,
+        { active: true, insert: true, setParent: true }
+      )
+    } catch {
+      tab = null
+    }
+    return new Promise((resolve) => {
+      let settled = false
+      let listenerId = null
+      const finish = (value) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        try {
+          if (typeof GM_removeValueChangeListener === 'function' && listenerId) {
+            GM_removeValueChangeListener(listenerId)
+          }
+        } catch {
+          // ignore listener cleanup failures
+        }
+        try {
+          tab?.close?.()
+        } catch {
+          // ignore tab cleanup failures
+        }
+        resolve(value)
+      }
+      const timer = setTimeout(() => finish(ratings), JL_TAB_TIMEOUT)
+      try {
+        listenerId = GM_addValueChangeListener(JL_RESPONSE_KEY, (_name, _old, value) => {
+          if (!value || value.id !== requestId) return
+          const merged = { ...ratings, ...(value.ratings || {}) }
+          for (const code of pending) {
+            const score = normalizeRating(merged[code])
+            if (score !== null) storeJavLibraryRating(code, score)
+          }
+          finish(merged)
+        })
+      } catch {
+        finish(ratings)
+      }
+    })
+  }
+
   function resolveViaTab(code) {
     const slug = normalizeCode(code)
     if (!slug) return Promise.resolve(null)
@@ -616,11 +809,15 @@
   if (isProviderHost()) {
     // Provider tabs only answer pending extraction requests from JavBoss.
     handleProviderTabRequest().catch(() => {})
+  } else if (isJavLibraryHost()) {
+    // JavLibrary tabs answer pending rating requests from JavBoss.
+    handleJavLibraryTabRequest()
   } else {
     pageWindow.__JAVBOSS_ONLINE_BRIDGE__ = {
       version: BRIDGE_VERSION,
       resolve: (code) => resolveOnlineStream(code),
       fetchResource: (url, responseType, headers) => fetchResource(url, responseType, headers),
+      fetchJavLibraryRatings: (codes) => resolveJavLibraryRatings(codes),
       debug: async (code) => {
         try {
           const source = await resolveOnlineStream(code)

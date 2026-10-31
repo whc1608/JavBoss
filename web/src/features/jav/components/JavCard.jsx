@@ -36,6 +36,13 @@ import VideoLibraryOutlinedIcon from '@mui/icons-material/VideoLibraryOutlined'
 import { JavItemEditors } from '@/features/jav/components/JavItemEditors'
 import WatchTimeIcons from '@/features/playback/components/WatchTimeIcons'
 
+function normalizeRatingCode(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[_ ]+/g, '-')
+}
+
 export default function JavCard(props) {
   const { portrait = false } = props
   const [coverCropEditorOpen, setCoverCropEditorOpen] = useState(false)
@@ -61,10 +68,12 @@ export default function JavCard(props) {
   const translateTitle = useStore((state) => preferChineseTitle(state.config))
   const [similarAnchorEl, setSimilarAnchorEl] = useState(null)
   const [similarItems, setSimilarItems] = useState(null)
+  const [similarJlRatings, setSimilarJlRatings] = useState({})
   const [similarIncludeLocal, setSimilarIncludeLocal] = useState(true)
   const [similarLoading, setSimilarLoading] = useState(false)
   const [similarError, setSimilarError] = useState('')
   const similarCloseTimerRef = useRef(null)
+  const similarRequestRef = useRef(0)
   const clearSimilarCloseTimer = () => {
     if (similarCloseTimerRef.current) {
       window.clearTimeout(similarCloseTimerRef.current)
@@ -80,16 +89,34 @@ export default function JavCard(props) {
   const loadSimilar = async (includeLocal) => {
     const javID = Number(props.item?.id)
     if (!Number.isFinite(javID) || javID <= 0) return
+    const requestSeq = (similarRequestRef.current += 1)
     setSimilarLoading(true)
     setSimilarError('')
+    setSimilarJlRatings({})
     try {
       const data = await fetchJavSimilar(javID, { includeLocal })
-      setSimilarItems(Array.isArray(data?.items) ? data.items : [])
+      if (similarRequestRef.current !== requestSeq) return
+      const items = Array.isArray(data?.items) ? data.items : []
+      setSimilarItems(items)
+      const codes = items.map((row) => normalizeRatingCode(row?.code)).filter(Boolean)
+      const bridge = typeof window === 'undefined' ? null : window.__JAVBOSS_ONLINE_BRIDGE__
+      if (codes.length && typeof bridge?.fetchJavLibraryRatings === 'function') {
+        bridge
+          .fetchJavLibraryRatings(codes)
+          .then((ratings) => {
+            if (similarRequestRef.current !== requestSeq) return
+            if (ratings && typeof ratings === 'object') {
+              setSimilarJlRatings(ratings)
+            }
+          })
+          .catch(() => {})
+      }
     } catch (error) {
+      if (similarRequestRef.current !== requestSeq) return
       setSimilarItems([])
       setSimilarError(getErrorMessage(error))
     } finally {
-      setSimilarLoading(false)
+      if (similarRequestRef.current === requestSeq) setSimilarLoading(false)
     }
   }
   const handleToggleSimilar = async (event) => {
@@ -798,6 +825,13 @@ export default function JavCard(props) {
                       const javlibraryHref = encodedCode
                         ? `https://www.javlibrary.com/cn/vl_searchbyid.php?keyword=${encodedCode}`
                         : ''
+                      const jlRating = similarJlRatings[normalizeRatingCode(row.code)]
+                      const hasJlRating = Number.isFinite(jlRating)
+                      const displayRating = hasJlRating
+                        ? jlRating
+                        : Number(row.rating) > 0
+                          ? Number(row.rating)
+                          : 0
                       return (
                         <div
                           key={row.id}
@@ -885,9 +919,19 @@ export default function JavCard(props) {
                               ) : null}
                             </span>
                           ) : null}
-                          <span className="flex shrink-0 items-center gap-0.5 text-xs font-semibold text-amber-600">
+                          <span
+                            className="flex shrink-0 items-center gap-0.5 text-xs font-semibold text-amber-600"
+                            title={
+                              hasJlRating
+                                ? zh('JavLibrary 评分', 'JavLibrary rating')
+                                : zh('JavDB 评分', 'JavDB rating')
+                            }
+                          >
                             <StarRoundedIcon sx={{ fontSize: 14 }} />
-                            {Number(row.rating) > 0 ? Number(row.rating).toFixed(1) : '—'}
+                            {displayRating > 0 ? displayRating.toFixed(1) : '—'}
+                            {hasJlRating ? (
+                              <span className="text-[9px] font-normal text-gray-400">JL</span>
+                            ) : null}
                           </span>
                         </div>
                       )
