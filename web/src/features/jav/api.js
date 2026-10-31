@@ -203,7 +203,10 @@ export async function fetchJavSimilar(id, { limit = 5, includeLocal = true } = {
   return res.json()
 }
 
-export async function fetchJavSimilarFresh(id, { includeLocal = true, refresh = false } = {}) {
+export async function fetchJavSimilarFresh(
+  id,
+  { includeLocal = true, refresh = false, signal } = {}
+) {
   const params = new URLSearchParams()
   params.set('include_local', includeLocal ? '1' : '0')
   if (refresh) params.set('refresh', '1')
@@ -211,6 +214,7 @@ export async function fetchJavSimilarFresh(id, { includeLocal = true, refresh = 
     `/jav/items/${encodeURIComponent(id)}/similar-fresh?${params.toString()}`,
     {
       cache: 'no-store',
+      signal,
     }
   )
   if (!res.ok) throw await apiError(res)

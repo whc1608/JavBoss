@@ -45,6 +45,11 @@ function normalizeRatingCode(value) {
     .replace(/[_ ]+/g, '-')
 }
 
+function similarDayKey() {
+  const now = new Date()
+  return `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`
+}
+
 export default function JavCard(props) {
   const { portrait = false } = props
   const [coverCropEditorOpen, setCoverCropEditorOpen] = useState(false)
@@ -77,6 +82,7 @@ export default function JavCard(props) {
   const [similarError, setSimilarError] = useState('')
   const similarCloseTimerRef = useRef(null)
   const similarRequestRef = useRef(0)
+  const similarCacheRef = useRef(new Map())
   const clearSimilarCloseTimer = () => {
     if (similarCloseTimerRef.current) {
       window.clearTimeout(similarCloseTimerRef.current)
@@ -89,18 +95,51 @@ export default function JavCard(props) {
       setSimilarAnchorEl(null)
     }, 250)
   }
+  const mergeJlRatings = (items, requestSeq) => {
+    const codes = items.map((row) => normalizeRatingCode(row?.code)).filter(Boolean)
+    const bridge = typeof window === 'undefined' ? null : window.__JAVBOSS_ONLINE_BRIDGE__
+    if (!codes.length || typeof bridge?.fetchJavLibraryRatings !== 'function') return
+    bridge
+      .fetchJavLibraryRatings(codes)
+      .then((ratings) => {
+        if (similarRequestRef.current !== requestSeq) return
+        if (ratings && typeof ratings === 'object') {
+          setSimilarJlRatings(ratings)
+        }
+      })
+      .catch(() => {})
+  }
   const loadSimilar = async (includeLocal, { refresh = false } = {}) => {
     const javID = Number(props.item?.id)
     if (!Number.isFinite(javID) || javID <= 0) return
+    const cacheKey = `${javID}:${includeLocal ? 1 : 0}:${similarDayKey()}`
+    if (!refresh) {
+      const cached = similarCacheRef.current.get(cacheKey)
+      if (cached) {
+        const requestSeq = (similarRequestRef.current += 1)
+        setSimilarError('')
+        setSimilarLoading(false)
+        setSimilarItems(cached.items)
+        setSimilarStale(cached.stale)
+        mergeJlRatings(cached.items, requestSeq)
+        return
+      }
+    }
     const requestSeq = (similarRequestRef.current += 1)
     setSimilarLoading(true)
     setSimilarError('')
     setSimilarJlRatings({})
     let items = []
     let stale = false
+    const controller = typeof AbortController === 'function' ? new AbortController() : null
+    const timer = controller ? window.setTimeout(() => controller.abort(), 16000) : null
     try {
       try {
-        const data = await fetchJavSimilarFresh(javID, { includeLocal, refresh })
+        const data = await fetchJavSimilarFresh(javID, {
+          includeLocal,
+          refresh,
+          signal: controller?.signal,
+        })
         items = Array.isArray(data?.items) ? data.items : []
         stale = Boolean(data?.stale) || Boolean(data?.error)
       } catch {
@@ -111,25 +150,15 @@ export default function JavCard(props) {
       if (similarRequestRef.current !== requestSeq) return
       setSimilarItems(items)
       setSimilarStale(stale)
-      const codes = items.map((row) => normalizeRatingCode(row?.code)).filter(Boolean)
-      const bridge = typeof window === 'undefined' ? null : window.__JAVBOSS_ONLINE_BRIDGE__
-      if (codes.length && typeof bridge?.fetchJavLibraryRatings === 'function') {
-        bridge
-          .fetchJavLibraryRatings(codes)
-          .then((ratings) => {
-            if (similarRequestRef.current !== requestSeq) return
-            if (ratings && typeof ratings === 'object') {
-              setSimilarJlRatings(ratings)
-            }
-          })
-          .catch(() => {})
-      }
+      similarCacheRef.current.set(cacheKey, { items, stale })
+      mergeJlRatings(items, requestSeq)
     } catch (error) {
       if (similarRequestRef.current !== requestSeq) return
       setSimilarItems([])
       setSimilarStale(true)
       setSimilarError(getErrorMessage(error))
     } finally {
+      if (timer) window.clearTimeout(timer)
       if (similarRequestRef.current === requestSeq) setSimilarLoading(false)
     }
   }
@@ -830,7 +859,7 @@ export default function JavCard(props) {
                 </div>
                 {similarLoading ? (
                   <div className="px-1 py-3 text-center text-xs text-gray-500">
-                    {zh('加载中…', 'Loading…')}
+                    {zh('正在从 JavDB 拉取推荐…', 'Loading recommendations from JavDB…')}
                   </div>
                 ) : similarError ? (
                   <div className="px-1 py-3 text-center text-xs text-red-500">{similarError}</div>

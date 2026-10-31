@@ -337,11 +337,14 @@ func (p *JavDBAPIClient) RelatedMoviesByCode(ctx context.Context, code string, l
 	}
 	out := make([]metadata.RelatedMovie, 0, len(relatives))
 	for _, entry := range relatives {
+		if ctx.Err() != nil {
+			break
+		}
 		id := strings.TrimSpace(string(entry.ID))
 		if id == "" {
 			continue
 		}
-		ctxDetail, cancel := context.WithTimeout(ctx, 20*time.Second)
+		ctxDetail, cancel := context.WithTimeout(ctx, 8*time.Second)
 		var data json.RawMessage
 		err := p.get(ctxDetail, "/api/v4/movies/"+url.PathEscape(id), nil, &data)
 		cancel()
@@ -387,6 +390,12 @@ func (p *JavDBAPIClient) RelatedMoviesByCode(ctx context.Context, code string, l
 		}
 		return out[left].Code < out[right].Code
 	})
+	if err := ctx.Err(); err != nil {
+		if len(out) >= 5 {
+			return out, nil
+		}
+		return out, err
+	}
 	return out, nil
 }
 

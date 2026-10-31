@@ -337,7 +337,9 @@ func listSimilarJavsFresh(c *gin.Context) {
 		return
 	}
 
-	related, err := scrape.LookupJavDBRelatedMovies(c.Request.Context(), source.Code, 12)
+	fetchCtx, cancel := context.WithTimeout(c.Request.Context(), 12*time.Second)
+	related, err := scrape.LookupJavDBRelatedMovies(fetchCtx, source.Code, 12)
+	cancel()
 	if err == nil && len(related) > 0 {
 		entry := javSimilarFreshEntry{
 			Day:       day,
