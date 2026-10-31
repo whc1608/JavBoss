@@ -8,8 +8,13 @@
   const ONLINE_CACHE_TTL = 10 * 60 * 1000;
   const MISSING_EXTENSION_PERMISSION =
     "扩展缺少在线片源访问权限，请在 JavBoss 助手弹窗中启用「在线片源播放」";
-  const CHALLENGE_ERROR =
-    "在线片源站点要求浏览器验证，请先在浏览器中打开对应站点完成验证后重试";
+
+  function challengeError(url) {
+    const target = String(url || "").trim();
+    return target
+      ? `在线片源站点要求浏览器验证，请先在浏览器中打开 ${target} 完成验证后重试`
+      : "在线片源站点要求浏览器验证，请先在浏览器中打开对应站点完成验证后重试";
+  }
   let parentOrigin = "";
   let sessionId = "";
 
@@ -199,6 +204,7 @@
     if (cached && cached.expiresAt > Date.now()) return cached.source;
 
     let challenged = false;
+    let challengeURL = "";
     const errors = [];
     for (const attempt of resolveAttempts(code)) {
       try {
@@ -217,12 +223,13 @@
         const message = String(error?.message || error || "");
         if (message === "challenge") {
           challenged = true;
+          challengeURL = attempt.pageURL;
           continue;
         }
         errors.push(message);
       }
     }
-    if (challenged) throw new Error(CHALLENGE_ERROR);
+    if (challenged) throw new Error(challengeError(challengeURL));
     if (errors.some((message) => message === "Failed to fetch")) {
       throw new Error(MISSING_EXTENSION_PERMISSION);
     }
@@ -261,7 +268,7 @@
     } else {
       const text = await response.text();
       if (isChallengePage(text)) {
-        return { ok: false, status: response.status, error: CHALLENGE_ERROR };
+        return { ok: false, status: response.status, error: challengeError(url) };
       }
       result.text = text;
     }

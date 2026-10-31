@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name         JavBoss 在线片源助手
 // @namespace    https://github.com/whc1608/JavBoss
-// @version      1.0.0
+// @version      1.1.0
 // @description  为 JavBoss 页面解析并播放在线片源，无需安装浏览器扩展
+// @updateURL    http://localhost:8655/javboss-online.user.js
+// @downloadURL  http://localhost:8655/javboss-online.user.js
 // @match        http://localhost/*
 // @match        http://127.0.0.1/*
 // @match        https://localhost/*
@@ -23,8 +25,13 @@
   const REQUEST_TIMEOUT = 30000
   const MISSING_PERMISSION =
     '在线片源脚本无法访问视频站点，请在 Tampermonkey 中允许该脚本连接 missav123.com 与 123av.com'
-  const CHALLENGE_ERROR =
-    '在线片源站点要求浏览器验证，请先在浏览器中打开对应站点完成验证后重试'
+
+  function challengeError(url) {
+    const target = String(url || '').trim()
+    return target
+      ? `在线片源站点要求浏览器验证，请先在浏览器中打开 ${target} 完成验证后重试`
+      : '在线片源站点要求浏览器验证，请先在浏览器中打开对应站点完成验证后重试'
+  }
 
   const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window
 
@@ -176,6 +183,7 @@
     if (cached && cached.expiresAt > Date.now()) return cached.source
 
     let challenged = false
+    let challengeURL = ''
     const errors = []
     for (const attempt of resolveAttempts(code)) {
       try {
@@ -194,12 +202,13 @@
         const message = String(error?.message || error || '')
         if (message === 'challenge') {
           challenged = true
+          challengeURL = attempt.pageURL
           continue
         }
         errors.push(message)
       }
     }
-    if (challenged) throw new Error(CHALLENGE_ERROR)
+    if (challenged) throw new Error(challengeError(challengeURL))
     if (errors.some((message) => message === 'Failed to fetch')) throw new Error(MISSING_PERMISSION)
     throw new Error('未找到可用的在线片源')
   }
@@ -241,7 +250,7 @@
     } else {
       const text = String(response.responseText || '')
       if (isChallengePage(text)) {
-        return { ok: false, status: response.status, error: CHALLENGE_ERROR }
+        return { ok: false, status: response.status, error: challengeError(target) }
       }
       result.text = text
     }
