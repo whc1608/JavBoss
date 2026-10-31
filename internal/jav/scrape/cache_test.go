@@ -135,14 +135,14 @@ func TestLookupCacheKeyVersionIsProviderSpecific(t *testing.T) {
 			provider: ProviderJavDB,
 			method:   "lookup_jav",
 			input:    "abc-001",
-			want:     "v4:jav:javdb:lookup_jav:ABC-001",
+			want:     "v5:jav:javdb:lookup_jav:ABC-001",
 		},
 		{
 			name:     "javdb-api lookup jav uses strict number version",
 			provider: ProviderJavDBAPI,
 			method:   "lookup_jav",
 			input:    "abc-001",
-			want:     "v5:jav:javdb-api:lookup_jav:ABC-001",
+			want:     "v6:jav:javdb-api:lookup_jav:ABC-001",
 		},
 		{
 			name:     "javdb-api studio link uses strict number version",

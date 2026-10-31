@@ -102,6 +102,7 @@ type Jav struct {
 	ZhTitle           string          `json:"zh_title" gorm:"not null;default:''"`
 	WatchedMS         int64           `json:"watched_ms" gorm:"not null;default:0"`
 	CoverCropPosition float64         `json:"cover_crop_position" gorm:"not null;default:1"`
+	Rating            float64         `json:"rating" gorm:"not null;default:0"`
 	Tags              []JavTag        `json:"tags,omitempty" gorm:"-"`
 	Idols             []JavIdol       `json:"idols,omitempty" gorm:"many2many:jav_idol_map"`
 	Videos            []Video         `json:"videos,omitempty" gorm:"-"`

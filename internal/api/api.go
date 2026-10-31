@@ -134,6 +134,8 @@ func RegisterRoutes(router gin.IRoutes) {
 	router.POST("/jav/title-translation/items", translateJavTitles)
 	router.GET("/jav/items/:id/sample-images/:index/:variant", getJavSampleImage)
 	router.GET("/jav/items/:id", getJavItem)
+	router.GET("/jav/items/:id/similar", listSimilarJavs)
+	router.GET("/jav/items/:id/online-stream", getJavOnlineStream)
 	router.PUT("/jav/items/:id", updateJavItem)
 	router.DELETE("/jav/items/:id/videos", deleteJavVideos)
 	router.POST("/jav/tags", createJavTag)

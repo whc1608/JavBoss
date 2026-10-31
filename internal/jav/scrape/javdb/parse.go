@@ -3,6 +3,8 @@ package javdb
 import (
 	"fmt"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"javboss/internal/jav/scrape/internal/htmlutil"
@@ -90,6 +92,7 @@ func parseJavDBMovieInfo(root *html.Node) *metadata.JavInfo {
 		Series:       strings.TrimSpace(fields.Series),
 		ReleaseUnix:  parseutil.ParseDateUnix(fields.ReleaseDate),
 		DurationMin:  parseutil.ParseRuntimeMinutes(fields.Runtime),
+		Rating:       parseJavDBRating(fields.Rating),
 		Tags:         parseutil.DedupeNonEmpty(fields.Tags),
 		Actors:       parseutil.DedupeNonEmpty(fields.Actors),
 		CoverURL:     parseJavDBCoverURL(root, ""),
@@ -100,6 +103,172 @@ func parseJavDBMovieInfo(root *html.Node) *metadata.JavInfo {
 		return nil
 	}
 	return info
+}
+
+type javDBActressFields struct {
+	Alias        string
+	BirthDate    string
+	Height       string
+	Measurements string
+	Cup          string
+}
+
+func parseJavDBActressInfo(root *html.Node) *metadata.ActressInfo {
+	if root == nil {
+		return nil
+	}
+
+	fields := extractJavDBActressFields(root)
+	name := findJavDBActressName(root)
+	if name == "" {
+		name = cleanJavDBValue(fields.Alias)
+	}
+
+	info := &metadata.ActressInfo{
+		HeightCM:  parseutil.ParseHeightCM(fields.Height),
+		BirthDate: parseutil.ParseBirthDateUnix(fields.BirthDate),
+		Cup:       parseJavDBCup(fields.Cup),
+	}
+	info.Bust, info.Waist, info.Hips = parseJavDBMeasurements(fields.Measurements)
+
+	name = strings.TrimSpace(name)
+	if name != "" {
+		if parseutil.ContainsJapaneseRunes(name) {
+			info.JapaneseName = name
+		} else {
+			info.RomanName = name
+		}
+	}
+
+	if info.RomanName == "" && info.JapaneseName == "" && info.HeightCM == 0 && info.BirthDate == 0 && info.Bust == 0 && info.Waist == 0 && info.Hips == 0 && info.Cup == 0 {
+		return nil
+	}
+	return info
+}
+
+func extractJavDBActressFields(root *html.Node) javDBActressFields {
+	var out javDBActressFields
+	if root == nil {
+		return out
+	}
+
+	htmlutil.DocumentSelection(root).Find("div.panel-block").Each(func(_ int, block *goquery.Selection) {
+		strong := block.ChildrenFiltered("strong").First()
+		label := normalizeJavDBLabel(htmlutil.CleanSelectionText(strong))
+		if label == "" {
+			return
+		}
+		value := collectJavDBValue(htmlutil.FirstSelectionNode(block), htmlutil.FirstSelectionNode(strong))
+		if value == "" {
+			return
+		}
+		switch {
+		case javDBLabelContains(label, "別名", "别名"):
+			if out.Alias == "" {
+				out.Alias = value
+			}
+		case javDBLabelContains(label, "出生日期", "出生年月日", "生日"):
+			if out.BirthDate == "" {
+				out.BirthDate = value
+			}
+		case javDBLabelContains(label, "身高"):
+			if out.Height == "" {
+				out.Height = value
+			}
+		case javDBLabelContains(label, "三围", "三圍", "胸腰臀"):
+			if out.Measurements == "" {
+				out.Measurements = value
+			}
+		case javDBLabelContains(label, "罩杯"):
+			if out.Cup == "" {
+				out.Cup = value
+			}
+		}
+	})
+	return out
+}
+
+func findJavDBActressName(root *html.Node) string {
+	doc := htmlutil.DocumentSelection(root)
+	for _, selector := range []string{
+		"h2.title strong",
+		"h2.title",
+		"h1",
+		"div.actor-name",
+		"span.actor-name",
+	} {
+		if name := htmlutil.CleanSelectionText(doc.Find(selector).First()); name != "" {
+			if !strings.Contains(strings.ToLower(name), "javdb") {
+				return name
+			}
+		}
+	}
+
+	title := htmlutil.CleanSelectionText(doc.Find("title").First())
+	if title == "" {
+		return ""
+	}
+	if idx := strings.Index(title, "|"); idx > 0 {
+		title = title[:idx]
+	}
+	return strings.TrimSpace(title)
+}
+
+func javDBLabelContains(label string, candidates ...string) bool {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return false
+	}
+	for _, candidate := range candidates {
+		if strings.Contains(label, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseJavDBCup(value string) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	match := regexp.MustCompile(`(?i)\b([A-K])\b`).FindStringSubmatch(value)
+	if len(match) < 2 {
+		return 0
+	}
+	return parseutil.CupLetterToNumber(match[1])
+}
+
+func parseJavDBRating(value string) float64 {
+	match := regexp.MustCompile(`\d+(?:\.\d+)?`).FindString(strings.TrimSpace(value))
+	if match == "" {
+		return 0
+	}
+	rating, err := strconv.ParseFloat(match, 64)
+	if err != nil || rating < 0 || rating > 5 {
+		return 0
+	}
+	return rating
+}
+
+func parseJavDBMeasurements(value string) (int, int, int) {
+	matches := regexp.MustCompile(`\d+`).FindAllString(strings.TrimSpace(value), -1)
+	if len(matches) < 3 {
+		return 0, 0, 0
+	}
+	bust, err := strconv.Atoi(matches[0])
+	if err != nil {
+		return 0, 0, 0
+	}
+	waist, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return 0, 0, 0
+	}
+	hips, err := strconv.Atoi(matches[2])
+	if err != nil {
+		return 0, 0, 0
+	}
+	return bust, waist, hips
 }
 
 func extractJavDBMovieFields(root *html.Node) javDBMovieFields {

@@ -192,6 +192,26 @@ export async function fetchJavItem(id) {
   return res.json()
 }
 
+export async function fetchJavSimilar(id, { limit = 5 } = {}) {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  const res = await apiFetch(`/jav/items/${encodeURIComponent(id)}/similar?${params.toString()}`, {
+    cache: 'no-store',
+  })
+  if (!res.ok) throw await apiError(res)
+  return res.json()
+}
+
+export async function fetchJavOnlineStream(id) {
+  const res = await apiFetch(`/jav/items/${encodeURIComponent(id)}/online-stream`, {
+    cache: 'no-store',
+  })
+  if (!res.ok) {
+    throw await apiError(res)
+  }
+  return res.json()
+}
+
 export async function fetchJavs({
   limit = 25,
   offset = 0,

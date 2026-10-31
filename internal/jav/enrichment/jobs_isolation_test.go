@@ -77,8 +77,8 @@ func TestSlowUncensoredProviderDoesNotBlockCensoredEnrichment(t *testing.T) {
 			cache := &metadataLookupCache{
 				values: map[string]scrape.JavInfo{
 					"v3:jav:avsox:lookup_jav:UNC-001":         {Studio: "Uncensored Studio", Series: "Uncensored Series", Actors: []string{"Uncensored Idol"}},
-					"v5:jav:javdb-api:lookup_jav:CEN-001":     {Studio: "Censored Studio", Series: "Censored Series", Actors: []string{"Censored Idol"}},
-					"v5:jav:javdb-api:lookup_jav:UNKNOWN-001": {Studio: "Unknown Studio", Series: "Unknown Series", Actors: []string{"Unknown Idol"}},
+					"v6:jav:javdb-api:lookup_jav:CEN-001":     {Studio: "Censored Studio", Series: "Censored Series", Actors: []string{"Censored Idol"}},
+					"v6:jav:javdb-api:lookup_jav:UNKNOWN-001": {Studio: "Unknown Studio", Series: "Unknown Series", Actors: []string{"Unknown Idol"}},
 				},
 				beforeGet: func(key string) {
 					if key == "v3:jav:avsox:lookup_jav:UNC-001" {

@@ -84,7 +84,7 @@ func TestEnrichSeriesOnlyFillsMissingField(t *testing.T) {
 					}
 				}
 				rows = append(rows, row)
-				key := "v5:jav:javdb-api:lookup_jav:" + tc.code
+				key := "v6:jav:javdb-api:lookup_jav:" + tc.code
 				if eligible && tc.lookup && !tc.hasSeries {
 					wantKeys = append(wantKeys, key)
 				}
@@ -139,7 +139,7 @@ func TestEnrichSeriesOnlyFillsMissingField(t *testing.T) {
 			sort.Strings(cache.keys)
 			var want []string
 			if !task.uncensored {
-				want = []string{"v2:jav:javmenu:lookup_jav:EMPTY-001", "v2:jav:javmenu:lookup_jav:NOTFOUND-001", "v4:jav:javdatabase:lookup_jav:EMPTY-001", "v4:jav:javdatabase:lookup_jav:NOTFOUND-001", "v5:jav:javdb-api:lookup_jav:EMPTY-001", "v5:jav:javdb-api:lookup_jav:NOTFOUND-001"}
+				want = []string{"v2:jav:javmenu:lookup_jav:EMPTY-001", "v2:jav:javmenu:lookup_jav:NOTFOUND-001", "v4:jav:javdatabase:lookup_jav:EMPTY-001", "v4:jav:javdatabase:lookup_jav:NOTFOUND-001", "v6:jav:javdb-api:lookup_jav:EMPTY-001", "v6:jav:javdb-api:lookup_jav:NOTFOUND-001"}
 			}
 			if !reflect.DeepEqual(cache.keys, want) {
 				t.Fatalf("second scan lookups=%v, want %v", cache.keys, want)

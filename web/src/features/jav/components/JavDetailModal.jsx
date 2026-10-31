@@ -9,10 +9,11 @@ import FavoriteBorderRoundedIcon from '@mui/icons-material/FavoriteBorderRounded
 import FavoriteRoundedIcon from '@mui/icons-material/FavoriteRounded'
 import { MovieEdit } from '@mui/icons-material'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
+import PublicOutlinedIcon from '@mui/icons-material/PublicOutlined'
 import RemoveCircleOutlineRoundedIcon from '@mui/icons-material/RemoveCircleOutlineRounded'
 import StarBorderRoundedIcon from '@mui/icons-material/StarBorderRounded'
 import StarRoundedIcon from '@mui/icons-material/StarRounded'
-import { IconButton, Popper, Rating } from '@mui/material'
+import { CircularProgress, IconButton, Menu, MenuItem, Popper, Rating } from '@mui/material'
 
 import { deleteVideoScreenshot, fetchVideoScreenshotsByIds } from '@/features/video/api'
 import { getResolvedJavSampleImages, resolveJavSampleImages } from '@/features/jav/api'
@@ -460,8 +461,10 @@ export default function JavDetailModal({
   externalLinks,
   preferChineseName,
   canPlay,
+  canPlayOnline = false,
   onClose,
   onPlay,
+  onPlayOnline,
   onOpenFavorites,
   onEdit,
   favoriteRating,
@@ -529,6 +532,28 @@ export default function JavDetailModal({
   const itemId = item?.id
   const itemSampleImages = item?.sample_images
   const code = String(item?.code || '').trim()
+  const [playSourceAnchor, setPlaySourceAnchor] = useState(null)
+  const [onlineLoading, setOnlineLoading] = useState(false)
+  const runPlayOnline = async () => {
+    if (onlineLoading) return
+    setOnlineLoading(true)
+    try {
+      await onPlayOnline?.()
+    } finally {
+      setOnlineLoading(false)
+    }
+  }
+  const handlePlayClick = (event) => {
+    if (canPlay && canPlayOnline) {
+      setPlaySourceAnchor(event.currentTarget)
+      return
+    }
+    if (canPlay) {
+      onPlay?.(event)
+      return
+    }
+    void runPlayOnline()
+  }
   const idols = useMemo(() => (Array.isArray(item?.idols) ? item.idols : []), [item?.idols])
   const videos = useMemo(() => (Array.isArray(item?.videos) ? item.videos : []), [item?.videos])
   const studioName = String(studio?.name || '').trim()
@@ -732,16 +757,47 @@ export default function JavDetailModal({
                 {code || zh('暂无封面', 'No cover')}
               </span>
             )}
-            {canPlay ? (
+            {canPlay || canPlayOnline ? (
               <button
                 type="button"
-                className="absolute left-1/2 top-1/2 z-[1] flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/65 text-white opacity-0 shadow-lg transition hover:bg-black/80 focus-visible:opacity-100 group-hover:opacity-100"
-                onClick={onPlay}
+                className="absolute left-1/2 top-1/2 z-[1] flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/65 text-white opacity-0 shadow-lg transition hover:bg-black/80 focus-visible:opacity-100 disabled:cursor-wait group-hover:opacity-100"
+                onClick={handlePlayClick}
+                disabled={onlineLoading}
                 aria-label={zh('播放', 'Play')}
               >
-                <PlayArrowIcon sx={{ fontSize: 54 }} />
+                {onlineLoading ? (
+                  <CircularProgress size={40} sx={{ color: '#fff' }} />
+                ) : (
+                  <PlayArrowIcon sx={{ fontSize: 54 }} />
+                )}
               </button>
             ) : null}
+            <Menu
+              anchorEl={playSourceAnchor}
+              open={Boolean(playSourceAnchor)}
+              onClose={() => setPlaySourceAnchor(null)}
+              anchorOrigin={{ vertical: 'center', horizontal: 'right' }}
+              transformOrigin={{ vertical: 'center', horizontal: 'left' }}
+            >
+              <MenuItem
+                onClick={() => {
+                  setPlaySourceAnchor(null)
+                  onPlay?.()
+                }}
+              >
+                <PlayArrowIcon fontSize="small" sx={{ mr: 1 }} />
+                {zh('播放本地视频', 'Play local video')}
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  setPlaySourceAnchor(null)
+                  void runPlayOnline()
+                }}
+              >
+                <PublicOutlinedIcon fontSize="small" sx={{ mr: 1 }} />
+                {zh('播放在线片源', 'Play online stream')}
+              </MenuItem>
+            </Menu>
           </div>
 
           <div className="flex min-w-0 flex-col gap-5">

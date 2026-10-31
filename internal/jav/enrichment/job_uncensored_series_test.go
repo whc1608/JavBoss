@@ -33,7 +33,7 @@ func TestEnrichUncensoredSeriesAvsoxFallback(t *testing.T) {
 				"v3:jav:avsox:lookup_jav:UNC-001": {Studio: "Unwanted Studio", Series: "AVSOX Series", Actors: []string{"AVSOX Idol"}, Title: "Unwanted title"},
 			}}
 			if tc.emptyAPI {
-				cache.values["v5:jav:javdb-api:lookup_jav:UNC-001"] = scrape.JavInfo{}
+				cache.values["v6:jav:javdb-api:lookup_jav:UNC-001"] = scrape.JavInfo{}
 			}
 			scrape.SetCache(cache)
 			t.Cleanup(func() { scrape.SetCache(nil) })
@@ -56,7 +56,7 @@ func TestEnrichUncensoredSeriesAvsoxFallback(t *testing.T) {
 			}
 			var wantKeys []string
 			if tc.wantFilled {
-				wantKeys = []string{"v5:jav:javdb-api:lookup_jav:UNC-001", "v3:jav:avsox:lookup_jav:UNC-001"}
+				wantKeys = []string{"v6:jav:javdb-api:lookup_jav:UNC-001", "v3:jav:avsox:lookup_jav:UNC-001"}
 			}
 			if !reflect.DeepEqual(cache.keys, wantKeys) {
 				t.Fatalf("lookups=%v, want %v", cache.keys, wantKeys)

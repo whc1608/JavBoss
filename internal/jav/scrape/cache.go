@@ -19,8 +19,8 @@ const (
 var lookupJavCacheKeyVersionByProvider = map[Provider]string{
 	ProviderJavBus:      "v8", // Use the producer for uncensored studios and the publisher for censored studios.
 	ProviderJavDatabase: "v4",
-	ProviderJavDB:       "v4",
-	ProviderJavDBAPI:    "v5", // Preserve separators when validating movie numbers.
+	ProviderJavDB:       "v5", // Persist provider rating.
+	ProviderJavDBAPI:    "v6", // Persist provider rating.
 	ProviderAvmoo:       "v6",
 	ProviderAvsox:       "v3",
 	ProviderJavMenu:     "v2",

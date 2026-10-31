@@ -28,6 +28,7 @@ function createHarness({
     "enabled",
     "javdb-auto-redirect",
     "ownership-enabled",
+    "online-stream-enabled",
     "test-connection",
     "connection-status",
     "status",

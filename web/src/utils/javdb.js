@@ -9,6 +9,13 @@ const BRIDGE_VERSION = 1
 
 let bridgeElement = null
 let bridgeReady = false
+let bridgeRequestSequence = 0
+const bridgeRequests = new Map()
+
+function newBridgeRequestID() {
+  bridgeRequestSequence += 1
+  return `${bridgeSessionId}-${bridgeRequestSequence}`
+}
 
 function newBridgeSessionId() {
   if (typeof globalThis.crypto?.randomUUID === 'function') return globalThis.crypto.randomUUID()
@@ -53,7 +60,13 @@ function initializeBridge() {
       message.sessionId === bridgeSessionId
     ) {
       bridgeReady = true
+      return
     }
+    const pending = bridgeRequests.get(String(message?.requestId || ''))
+    if (!pending || message?.type !== pending.responseType) return
+    bridgeRequests.delete(pending.requestId)
+    window.clearTimeout(pending.timer)
+    pending.resolve(message)
   })
 
   if (document.body) mountBridge()
@@ -61,6 +74,35 @@ function initializeBridge() {
 }
 
 initializeBridge()
+
+function bridgeError(code, message) {
+  const error = new Error(message)
+  error.code = code
+  return error
+}
+
+function postExtensionRequest(requestType, payload, responseType, timeout) {
+  return new Promise((resolve, reject) => {
+    if (!bridgeReady || !bridgeElement?.contentWindow) {
+      reject(bridgeError('EXTENSION_UNAVAILABLE', 'JavBoss extension is unavailable'))
+      return
+    }
+    const requestId = newBridgeRequestID()
+    const timer = window.setTimeout(() => {
+      bridgeRequests.delete(requestId)
+      reject(bridgeError('EXTENSION_TIMEOUT', 'The extension did not respond in time'))
+    }, timeout)
+    bridgeRequests.set(requestId, { requestId, responseType, resolve, timer })
+    bridgeElement.contentWindow.postMessage(
+      { ...payload, type: requestType, sessionId: bridgeSessionId, requestId },
+      EXTENSION_ORIGIN
+    )
+  })
+}
+
+export function requestExtension(requestType, payload, { responseType, timeout = 30000 } = {}) {
+  return postExtensionRequest(requestType, payload, String(responseType || ''), timeout)
+}
 
 export function isJavBossExtensionReady() {
   return bridgeReady

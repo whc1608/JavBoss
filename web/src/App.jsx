@@ -264,6 +264,7 @@ export default function App() {
     playerVideo,
     playerPlaylist,
     playerIndex,
+    playerOnline,
     selectPlayerVideo,
     closePlayer,
     playerStartTime,
@@ -288,6 +289,7 @@ export default function App() {
     closeJavVideoPicker,
     playVideos,
     handleJavPlay,
+    handleJavOnlinePlay,
     handleJavOpenFile,
     handleJavRevealFile,
     openVideoScreenshots,
@@ -468,6 +470,7 @@ export default function App() {
 
   const javCardActions = {
     onPlay: handleJavPlay,
+    onPlayOnline: handleJavOnlinePlay,
     onOpenFile: handleJavOpenFile,
     alternatePlayerLabel,
     onRevealFile: handleJavRevealFile,
@@ -780,6 +783,7 @@ export default function App() {
 
       <PlayerModal
         video={playerVideo}
+        online={playerOnline}
         playlist={playerPlaylist}
         currentIndex={playerIndex}
         onSelectVideo={selectPlayerVideo}

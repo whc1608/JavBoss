@@ -240,6 +240,34 @@ func getJavItem(c *gin.Context) {
 	c.JSON(http.StatusOK, item)
 }
 
+func listSimilarJavs(c *gin.Context) {
+	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || id <= 0 {
+		respondLocalizedError(c, http.StatusBadRequest, "JAV 作品 ID 无效", "Invalid JAV item ID")
+		return
+	}
+	limit := 5
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > 5 {
+		limit = 5
+	}
+	items, err := dbpkg.Default().ListSimilarJavs(c.Request.Context(), id, limit)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			respondLocalizedError(c, http.StatusNotFound, "JAV 作品不存在", "JAV item was not found")
+			return
+		}
+		logging.Error("list similar JAV id=%d: %v", id, err)
+		respondLocalizedError(c, http.StatusInternalServerError, "加载相似推荐失败", "Failed to load similar recommendations")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
 func resolveJavSampleImages(c *gin.Context) {
 	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
 	if err != nil || id <= 0 {

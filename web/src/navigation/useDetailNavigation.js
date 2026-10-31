@@ -114,10 +114,11 @@ export default function useDetailNavigation({
   }, [])
 
   const openJavDetail = useCallback(
-    (item) => {
+    (item, options = {}) => {
       const id = Number(item?.id)
       if (!Number.isSafeInteger(id) || id <= 0 || id === javDetailId) return
-      cacheJavDetail(item)
+      // Partial entries (e.g. recommendations) must be fetched by the detail route.
+      if (options.cache !== false) cacheJavDetail(item)
       saveCurrentScrollPosition()
       const nextIndex = browserHistoryIndexRef.current + 1
       navigate(withJavDetail(pageRoute, id), {

@@ -12,9 +12,12 @@
   let saveQueue = Promise.resolve();
   let connectionVersion = 0;
   const JAVDB_SETTINGS_KEY = "javboss:javdb-settings";
+  const ONLINE_STREAM_SETTINGS_KEY = "javboss:online-stream-settings";
+  const ONLINE_STREAM_ORIGINS = ["https://*/*"];
   const serverInput = document.getElementById("server-url");
   const enabledInput = document.getElementById("enabled");
   const ownershipInput = document.getElementById("ownership-enabled");
+  const onlineStreamInput = document.getElementById("online-stream-enabled");
   const javDBAutoRedirectInput = document.getElementById("javdb-auto-redirect");
   const testButton = document.getElementById("test-connection");
   const connectionStatus = document.getElementById("connection-status");
@@ -139,6 +142,14 @@
     }
   }
 
+  async function hasOnlineStreamPermission() {
+    try {
+      return await chrome.permissions.contains({ origins: ONLINE_STREAM_ORIGINS });
+    } catch {
+      return false;
+    }
+  }
+
   async function loadSettings() {
     if (!(await storageReady))
       throw new Error("无法安全访问扩展凭据，请重新加载扩展");
@@ -147,6 +158,7 @@
       CONNECTION_SETTINGS_KEY,
       JAVDB_SETTINGS_KEY,
       OWNERSHIP_SETTINGS_KEY,
+      ONLINE_STREAM_SETTINGS_KEY,
     ]);
     const magnetSettings = stored[MAGNET_DOWNLOAD_SETTINGS_KEY] || {};
     const javDBSettings = stored[JAVDB_SETTINGS_KEY] || {};
@@ -156,7 +168,11 @@
     enabledInput.checked = magnetSettings.enabled === true;
     javDBAutoRedirectInput.checked = javDBSettings.autoRedirect !== false;
     ownershipInput.checked = stored[OWNERSHIP_SETTINGS_KEY]?.enabled !== false;
+    onlineStreamInput.checked =
+      stored[ONLINE_STREAM_SETTINGS_KEY]?.enabled === true &&
+      (await hasOnlineStreamPermission());
     ownershipInput.disabled = false;
+    onlineStreamInput.disabled = false;
   }
 
   function persistSettings(values) {
@@ -247,6 +263,31 @@
     });
     if (!saved) javDBAutoRedirectInput.checked = !autoRedirect;
     javDBAutoRedirectInput.disabled = false;
+  });
+  onlineStreamInput.addEventListener("change", async () => {
+    const enabled = onlineStreamInput.checked;
+    onlineStreamInput.disabled = true;
+    try {
+      if (enabled) {
+        const granted = await chrome.permissions.request({
+          origins: ONLINE_STREAM_ORIGINS,
+        });
+        if (!granted) {
+          onlineStreamInput.checked = false;
+          showStatus("需要允许访问视频站点才能启用在线片源播放", true);
+          return;
+        }
+      }
+      const saved = await persistSettings({
+        [ONLINE_STREAM_SETTINGS_KEY]: { enabled },
+      });
+      if (!saved) onlineStreamInput.checked = !enabled;
+    } catch (error) {
+      onlineStreamInput.checked = false;
+      showStatus(String(error?.message || "启用在线片源播放失败"), true);
+    } finally {
+      onlineStreamInput.disabled = false;
+    }
   });
   testButton.addEventListener("click", testConnection);
   ownershipInput.addEventListener("change", async () => {

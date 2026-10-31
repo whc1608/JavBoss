@@ -163,6 +163,96 @@ func (store *Store) GetJav(ctx context.Context, javID int64, directoryIDs []int6
 	return &items[0], nil
 }
 
+// JavSimilarItem describes a recommendation row for a JAV detail card.
+type JavSimilarItem struct {
+	ID             int64   `json:"id"`
+	Code           string  `json:"code"`
+	Title          string  `json:"title"`
+	ZhTitle        string  `json:"zh_title"`
+	Rating         float64 `json:"rating"`
+	FavoriteRating float64 `json:"favorite_rating"`
+}
+
+// ListSimilarJavs recommends items sharing idols, series, studio or tags.
+// Relation strength ranks first; provider rating breaks ties.
+func (store *Store) ListSimilarJavs(ctx context.Context, javID int64, limit int) ([]JavSimilarItem, error) {
+	if javID <= 0 {
+		return nil, errors.New("jav id must be positive")
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+	if limit > 20 {
+		limit = 20
+	}
+
+	var source models.Jav
+	if err := store.conn.WithContext(ctx).
+		Select("id", "series_id", "studio_id").
+		Where("id = ?", javID).
+		First(&source).Error; err != nil {
+		return nil, fmt.Errorf("load similar source: %w", err)
+	}
+
+	var idolIDs []int64
+	if err := store.conn.WithContext(ctx).
+		Table("jav_idol_map").
+		Where("jav_id = ?", javID).
+		Pluck("jav_idol_id", &idolIDs).Error; err != nil {
+		return nil, fmt.Errorf("load similar idols: %w", err)
+	}
+	var tagIDs []int64
+	if err := store.conn.WithContext(ctx).
+		Table("jav_tag_map").
+		Where("jav_id = ?", javID).
+		Distinct().
+		Pluck("jav_tag_id", &tagIDs).Error; err != nil {
+		return nil, fmt.Errorf("load similar tags: %w", err)
+	}
+
+	scoreParts := make([]string, 0, 4)
+	args := make([]any, 0, 8)
+	if len(idolIDs) > 0 {
+		scoreParts = append(scoreParts, "(SELECT COUNT(DISTINCT jim.jav_idol_id) FROM jav_idol_map jim WHERE jim.jav_id = j.id AND jim.jav_idol_id IN ?) * 3")
+		args = append(args, idolIDs)
+	}
+	if source.SeriesID != nil {
+		scoreParts = append(scoreParts, "CASE WHEN j.series_id = ? THEN 2 ELSE 0 END")
+		args = append(args, *source.SeriesID)
+	}
+	if source.StudioID != nil {
+		scoreParts = append(scoreParts, "CASE WHEN j.studio_id = ? THEN 1 ELSE 0 END")
+		args = append(args, *source.StudioID)
+	}
+	if len(tagIDs) > 0 {
+		scoreParts = append(scoreParts, "(SELECT COUNT(DISTINCT jtm.jav_tag_id) FROM jav_tag_map jtm WHERE jtm.jav_id = j.id AND jtm.jav_tag_id IN ?)")
+		args = append(args, tagIDs)
+	}
+	if len(scoreParts) == 0 {
+		return []JavSimilarItem{}, nil
+	}
+
+	query := `SELECT similar.id, similar.code, similar.title, similar.zh_title, similar.rating, similar.favorite_rating
+FROM (
+  SELECT j.id, j.code, j.title, j.zh_title, j.rating, j.favorite_rating, (` + strings.Join(scoreParts, " + ") + `) AS score
+  FROM jav j
+  WHERE j.id <> ?
+) AS similar
+WHERE similar.score > 0
+ORDER BY similar.score DESC, similar.rating DESC, similar.favorite_rating DESC, similar.id DESC
+LIMIT ?`
+	args = append(args, javID, limit)
+
+	var items []JavSimilarItem
+	if err := store.conn.WithContext(ctx).Raw(query, args...).Scan(&items).Error; err != nil {
+		return nil, fmt.Errorf("list similar javs: %w", err)
+	}
+	if items == nil {
+		items = []JavSimilarItem{}
+	}
+	return items, nil
+}
+
 // SearchJav lists Jav metadata filtered by idol IDs/tag IDs/search with pagination and sorting.
 func (store *Store) SearchJav(ctx context.Context, idolIDs []int64, tagIDs []int64, search, sort string, limit, offset int, seed *int64, directoryIDs []int64, filterIDs ...int64) ([]models.Jav, int64, error) {
 	return store.SearchJavWithPrefix(ctx, idolIDs, tagIDs, search, "", sort, limit, offset, seed, directoryIDs, filterIDs...)
@@ -2678,9 +2768,8 @@ func (store *Store) FindIdolSoloCode(ctx context.Context, idolID int64) (string,
 // ListIdolsMissingProfile returns idols that have no profile fields populated.
 func (store *Store) ListIdolsMissingProfile(ctx context.Context) ([]models.JavIdol, error) {
 	var idols []models.JavIdol
-	soloIdols := store.buildVisibleSoloIdolCoverQuery(ctx, nil)
 	if err := store.conn.WithContext(ctx).
-		Joins("JOIN (?) solo_idols ON solo_idols.jav_idol_id = jav_idol.id", soloIdols).
+		Model(&models.JavIdol{}).
 		Where(`
 (
   japanese_name IS NULL OR japanese_name = '' OR
@@ -3321,6 +3410,9 @@ func saveJavInfoTx(tx *gorm.DB, info *metadata.JavInfo, now ...time.Time) (*mode
 	// localized titles (including cached JavDB results) must not replace them.
 	javRec.ReleaseUnix = info.ReleaseUnix
 	javRec.DurationMin = info.DurationMin
+	if info.Rating > 0 {
+		javRec.Rating = info.Rating
+	}
 	javRec.FetchedAt = ts
 	if info.IsUncensored != nil {
 		isUncensored := *info.IsUncensored
@@ -3477,6 +3569,40 @@ func (store *Store) UpdateJavIsUncensoredIfUnknown(ctx context.Context, javID in
 		Where("id = ? AND is_uncensored IS NULL", javID).
 		Update("is_uncensored", isUncensored).Error; err != nil {
 		return fmt.Errorf("update jav is_uncensored: %w", err)
+	}
+	return nil
+}
+
+// ListJavMissingRating returns JAV records that have no provider rating yet.
+func (store *Store) ListJavMissingRating(ctx context.Context, limit int) ([]models.Jav, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	var items []models.Jav
+	if err := store.conn.WithContext(ctx).
+		Select("id", "code").
+		Where("rating <= 0").
+		Order("id").
+		Limit(limit).
+		Find(&items).Error; err != nil {
+		return nil, fmt.Errorf("list jav missing rating: %w", err)
+	}
+	return items, nil
+}
+
+// UpdateJavRating stores a provider rating without overwriting an existing one.
+func (store *Store) UpdateJavRating(ctx context.Context, javID int64, rating float64) error {
+	if javID <= 0 {
+		return errors.New("jav id must be positive")
+	}
+	if !isFiniteFloat(rating) || rating <= 0 || rating > 5 {
+		return nil
+	}
+	if err := store.conn.WithContext(ctx).
+		Model(&models.Jav{}).
+		Where("id = ? AND rating <= 0", javID).
+		UpdateColumn("rating", rating).Error; err != nil {
+		return fmt.Errorf("update jav rating: %w", err)
 	}
 	return nil
 }

@@ -22,6 +22,7 @@ export default function useJavItemActions({
   onToggleSelect,
   selectionDisabled = false,
   onPlay,
+  onPlayOnline,
   buildJavUrl,
   onIdolClick,
   onOpenFavorites,
@@ -308,10 +309,16 @@ export default function useJavItemActions({
   }
 
   const canPlay = Boolean(primaryVideo && primaryVideo.id)
+  const canPlayOnline = Boolean(code)
   const handlePlay = (event) => {
     event?.stopPropagation()
     if (!canPlay) return
     onPlay?.(primaryVideo, item)
+  }
+  const handlePlayOnline = (event) => {
+    event?.stopPropagation()
+    if (!canPlayOnline) return
+    onPlayOnline?.(item)
   }
   const tags = useMemo(() => {
     const rawTags = Array.isArray(item?.tags) ? item.tags : []
@@ -603,6 +610,8 @@ export default function useJavItemActions({
     code,
     handlePlay,
     canPlay,
+    canPlayOnline,
+    handlePlayOnline,
     setFavoriteRatingEditing,
     setFavoriteRatingPreview,
     favoriteRatingError,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -303,6 +304,94 @@ func TestValidateJavSampleImageDetailURL(t *testing.T) {
 			}
 			if got != test.want {
 				t.Fatalf("valid = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestListSimilarJavs(t *testing.T) {
+	deps := newTestDependencies()
+	database, err := dbpkg.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deps.database = database
+	deps.bindDatabase(t)
+	t.Cleanup(func() {
+		if sqlDB, err := database.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	idol := models.JavIdol{Name: "Similar idol"}
+	if err := database.Create(&idol).Error; err != nil {
+		t.Fatal(err)
+	}
+	source := models.Jav{Code: "SIM-000", Title: "Source"}
+	if err := database.Create(&source).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&models.JavIdolMap{JavID: source.ID, JavIdolID: idol.ID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	candidates := make([]models.Jav, 0, 6)
+	for index, rating := range []float64{4.5, 4.4, 4.3, 4.2, 4.1, 4.0} {
+		item := models.Jav{Code: fmt.Sprintf("SIM-%03d", index+1), Title: "Similar", Rating: rating}
+		if err := database.Create(&item).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := database.Create(&models.JavIdolMap{JavID: item.ID, JavIdolID: idol.ID}).Error; err != nil {
+			t.Fatal(err)
+		}
+		candidates = append(candidates, item)
+	}
+
+	router := gin.New()
+	router.GET("/jav/items/:id/similar", listSimilarJavs)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/jav/items/%d/similar?limit=10", source.ID), nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	var payload struct {
+		Items []struct {
+			ID     int64   `json:"id"`
+			Code   string  `json:"code"`
+			Rating float64 `json:"rating"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Items) != 5 {
+		t.Fatalf("item count = %d, want 5: %s", len(payload.Items), response.Body.String())
+	}
+	for index, item := range payload.Items {
+		if item.ID == source.ID {
+			t.Fatalf("source item should not be recommended: %+v", item)
+		}
+		if index > 0 && item.Rating > payload.Items[index-1].Rating {
+			t.Fatalf("ratings not sorted descending: %+v", payload.Items)
+		}
+	}
+	if payload.Items[0].ID != candidates[0].ID || payload.Items[0].Rating != 4.5 {
+		t.Fatalf("unexpected first recommendation: %+v", payload.Items[0])
+	}
+
+	for _, tc := range []struct {
+		id     string
+		status int
+	}{
+		{"999", http.StatusNotFound},
+		{"invalid", http.StatusBadRequest},
+		{"0", http.StatusBadRequest},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/jav/items/"+tc.id+"/similar", nil))
+			if response.Code != tc.status {
+				t.Fatalf("status = %d, want %d: %s", response.Code, tc.status, response.Body.String())
 			}
 		})
 	}

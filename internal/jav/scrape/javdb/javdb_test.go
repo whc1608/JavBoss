@@ -218,6 +218,9 @@ func TestParseJavDBMovieInfo(t *testing.T) {
 	if info.DurationMin != 170 {
 		t.Fatalf("unexpected duration: %d", info.DurationMin)
 	}
+	if info.Rating != 4.41 {
+		t.Fatalf("unexpected rating: %v", info.Rating)
+	}
 
 	wantTags := []string{"單體作品", "美少女"}
 	if len(info.Tags) != len(wantTags) {
@@ -479,5 +482,78 @@ func TestParseJavDBCoverURL(t *testing.T) {
 	got := parseJavDBCoverURL(doc, "https://javdb.com/v/kKdRm")
 	if got != "https://c0.jdbstatic.com/covers/kk/kKdRm.jpg" {
 		t.Fatalf("unexpected cover url: %q", got)
+	}
+}
+
+func TestParseJavDBActressInfo(t *testing.T) {
+	doc, err := html.Parse(strings.NewReader(`
+<!doctype html>
+<html>
+<head><title>岬ななみ | JavDB 成人影片數據庫</title></head>
+<body>
+  <h2 class="title is-4"><strong>岬ななみ</strong></h2>
+  <div class="panel-block"><strong>別名:</strong><span class="value">みさきななみ</span></div>
+  <div class="panel-block"><strong>出生日期:</strong><span class="value">1996-05-23</span></div>
+  <div class="panel-block"><strong>身高:</strong><span class="value">160 cm</span></div>
+  <div class="panel-block"><strong>三圍:</strong><span class="value">88 - 58 - 87 cm</span></div>
+  <div class="panel-block"><strong>罩杯:</strong><span class="value">E</span></div>
+</body>
+</html>`))
+	if err != nil {
+		t.Fatalf("parse html: %v", err)
+	}
+
+	info := parseJavDBActressInfo(doc)
+	if info == nil {
+		t.Fatal("expected actress info, got nil")
+	}
+	if info.JapaneseName != "岬ななみ" || info.RomanName != "" {
+		t.Fatalf("unexpected names: %#v", info)
+	}
+	wantBirth := time.Date(1996, 5, 23, 0, 0, 0, 0, time.UTC).Unix()
+	if info.BirthDate != int(wantBirth) {
+		t.Fatalf("unexpected birth date: got %d want %d", info.BirthDate, wantBirth)
+	}
+	if info.HeightCM != 160 || info.Bust != 88 || info.Waist != 58 || info.Hips != 87 || info.Cup != 5 {
+		t.Fatalf("unexpected measurements: %#v", info)
+	}
+}
+
+func TestParseJavDBActressInfoRomanNameWithoutProfileFields(t *testing.T) {
+	doc, err := html.Parse(strings.NewReader(`
+<!doctype html>
+<html>
+<body>
+  <h1>Nanami Misaki</h1>
+</body>
+</html>`))
+	if err != nil {
+		t.Fatalf("parse html: %v", err)
+	}
+
+	info := parseJavDBActressInfo(doc)
+	if info == nil {
+		t.Fatal("expected actress info, got nil")
+	}
+	if info.RomanName != "Nanami Misaki" || info.JapaneseName != "" {
+		t.Fatalf("unexpected names: %#v", info)
+	}
+}
+
+func TestParseJavDBRating(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  float64
+	}{
+		{"4.41分, 由558人評價", 4.41},
+		{"4", 4},
+		{"5.00", 5},
+		{"5.5", 0},
+		{"暂无评分", 0},
+		{"", 0},
+	} {
+		if got := parseJavDBRating(tc.value); got != tc.want {
+			t.Fatalf("parseJavDBRating(%q) = %v, want %v", tc.value, got, tc.want)
+		}
 	}
 }

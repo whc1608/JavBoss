@@ -43,6 +43,7 @@ func EnrichIdolProfiles(ctx context.Context) error {
 			javDatabaseInfo *scrape.ActressInfo
 			avWikiInfo      *scrape.ActressInfo
 			javModelInfo    *scrape.ActressInfo
+			javDBInfo       *scrape.ActressInfo
 			code            string
 		)
 		code, err = db.Default().FindIdolSoloCode(ctx, idol.ID)
@@ -57,7 +58,7 @@ func EnrichIdolProfiles(ctx context.Context) error {
 			}
 		}
 
-		var avWikiLookup, javModelLookup idolActressLookup
+		var avWikiLookup, javModelLookup, javDBLookup idolActressLookup
 		if lookupName != "" {
 			avWikiLookup = func() (*scrape.ActressInfo, error) {
 				return scrape.LookupActressByJapaneseName(ctx, lookupName, scrape.ProviderAVWiki)
@@ -65,12 +66,16 @@ func EnrichIdolProfiles(ctx context.Context) error {
 			javModelLookup = func() (*scrape.ActressInfo, error) {
 				return scrape.LookupActressByJapaneseName(ctx, lookupName, scrape.ProviderJavModel)
 			}
+			javDBLookup = func() (*scrape.ActressInfo, error) {
+				return scrape.LookupActressByJapaneseName(ctx, lookupName, scrape.ProviderJavDB)
+			}
 		}
 
-		lookupResults := lookupActressProfilesConcurrently(avWikiLookup, javDatabaseLookup, javModelLookup)
+		lookupResults := lookupActressProfilesConcurrently(avWikiLookup, javDatabaseLookup, javModelLookup, javDBLookup)
 		avWikiInfo = lookupResults[0].info
 		javDatabaseInfo = lookupResults[1].info
 		javModelInfo = lookupResults[2].info
+		javDBInfo = lookupResults[3].info
 		if lookupErr := lookupResults[0].err; lookupErr != nil && !errors.Is(lookupErr, scrape.ErrNotFound) {
 			logging.Error("lookup actress (avwiki) failed idol=%d name=%s err=%v", idol.ID, lookupName, lookupErr)
 		}
@@ -80,8 +85,11 @@ func EnrichIdolProfiles(ctx context.Context) error {
 		if lookupErr := lookupResults[2].err; lookupErr != nil && !errors.Is(lookupErr, scrape.ErrNotFound) {
 			logging.Error("lookup actress (javmodel) failed idol=%d name=%s err=%v", idol.ID, lookupName, lookupErr)
 		}
+		if lookupErr := lookupResults[3].err; lookupErr != nil && !errors.Is(lookupErr, scrape.ErrNotFound) {
+			logging.Error("lookup actress (javdb) failed idol=%d name=%s err=%v", idol.ID, lookupName, lookupErr)
+		}
 
-		info := mergeActressInfosByPriority(avWikiInfo, javDatabaseInfo, javModelInfo)
+		info := mergeActressInfosByPriority(avWikiInfo, javDatabaseInfo, javModelInfo, javDBInfo)
 		if info == nil {
 			continue
 		}

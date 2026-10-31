@@ -21,10 +21,10 @@ func TestEnrichCensoredSeriesJavMenuFallback(t *testing.T) {
 		want     string
 		wantKeys []string
 	}{
-		{"API not found", &censored, nil, false, "Menu Series", []string{"v5:jav:javdb-api:lookup_jav:SER-001", "v2:jav:javmenu:lookup_jav:SER-001"}},
-		{"API series empty", &censored, &scrape.JavInfo{Series: "  "}, false, "Menu Series", []string{"v5:jav:javdb-api:lookup_jav:SER-001", "v2:jav:javmenu:lookup_jav:SER-001"}},
-		{"API preferred", &censored, &scrape.JavInfo{Series: "API Series"}, false, "API Series", []string{"v5:jav:javdb-api:lookup_jav:SER-001"}},
-		{"unknown censor state", nil, nil, false, "Menu Series", []string{"v5:jav:javdb-api:lookup_jav:SER-001", "v2:jav:javmenu:lookup_jav:SER-001"}},
+		{"API not found", &censored, nil, false, "Menu Series", []string{"v6:jav:javdb-api:lookup_jav:SER-001", "v2:jav:javmenu:lookup_jav:SER-001"}},
+		{"API series empty", &censored, &scrape.JavInfo{Series: "  "}, false, "Menu Series", []string{"v6:jav:javdb-api:lookup_jav:SER-001", "v2:jav:javmenu:lookup_jav:SER-001"}},
+		{"API preferred", &censored, &scrape.JavInfo{Series: "API Series"}, false, "API Series", []string{"v6:jav:javdb-api:lookup_jav:SER-001"}},
+		{"unknown censor state", nil, nil, false, "Menu Series", []string{"v6:jav:javdb-api:lookup_jav:SER-001", "v2:jav:javmenu:lookup_jav:SER-001"}},
 		{"uncensored excluded", &uncensored, nil, false, "", nil},
 		{"existing series preserved", &censored, nil, true, "Existing Series", nil},
 	} {
@@ -49,7 +49,7 @@ func TestEnrichCensoredSeriesJavMenuFallback(t *testing.T) {
 				"v2:jav:javmenu:lookup_jav:SER-001": {Series: " Menu Series ", Studio: "Unwanted Studio", Title: "Unwanted", Actors: []string{"Unwanted Idol"}},
 			}}
 			if tc.api != nil {
-				cache.values["v5:jav:javdb-api:lookup_jav:SER-001"] = *tc.api
+				cache.values["v6:jav:javdb-api:lookup_jav:SER-001"] = *tc.api
 			}
 			scrape.SetCache(cache)
 			t.Cleanup(func() { scrape.SetCache(nil) })

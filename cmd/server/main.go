@@ -235,6 +235,7 @@ func run() int {
 			enrichment.StartUncensoredSeriesEnrichment(ctx, time.Minute)
 			enrichment.StartUncensoredIdolEnrichment(ctx, time.Minute)
 			enrichment.StartIdolProfileEnrichment(ctx, time.Minute)
+			enrichment.StartJavRatingEnrichment(ctx, time.Minute)
 		}
 	}()
 

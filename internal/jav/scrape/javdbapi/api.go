@@ -164,6 +164,7 @@ type javDBAPIMovie struct {
 	SeriesID    javDBAPIValue `json:"series_id"`
 	ReleaseDate string        `json:"release_date"`
 	Duration    javDBAPIValue `json:"duration"`
+	Score       javDBAPIValue `json:"score"`
 	CoverURL    string        `json:"cover_url"`
 	Type        javDBAPIValue `json:"type"`
 	Tags        []struct {
@@ -270,6 +271,9 @@ func (p *JavDBAPIClient) LookupJavByCode(ctx context.Context, code string) (*met
 		Studio: strings.TrimSpace(movie.MakerName), Series: strings.TrimSpace(movie.SeriesName),
 		ReleaseUnix: parseutil.ParseDateUnix(movie.ReleaseDate), CoverURL: parseutil.ResolveSampleImageURL(p.baseURL, movie.CoverURL),
 		Provider: metadata.ProviderJavDBAPI, SampleImages: []metadata.SampleImage{},
+	}
+	if score, err := strconv.ParseFloat(strings.TrimSpace(string(movie.Score)), 64); err == nil && score >= 0 && score <= 5 {
+		info.Rating = score
 	}
 	// Keep the application's canonical number stable for database linking and
 	// subsequent metadata refreshes, regardless of the API's FC2 spelling.

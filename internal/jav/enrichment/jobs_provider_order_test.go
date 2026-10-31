@@ -31,7 +31,7 @@ func TestEnrichmentTriesFallbackBeforeMovingToNextJav(t *testing.T) {
 				if err := gdb.Create(&row).Error; err != nil {
 					t.Fatal(err)
 				}
-				cache.values["v5:jav:javdb-api:lookup_jav:"+code] = scrape.JavInfo{Series: "  ", Actors: []string{"", "  "}}
+				cache.values["v6:jav:javdb-api:lookup_jav:"+code] = scrape.JavInfo{Series: "  ", Actors: []string{"", "  "}}
 				cache.values[task.fallback+code] = task.result
 			}
 			scrape.SetCache(cache)
@@ -45,8 +45,8 @@ func TestEnrichmentTriesFallbackBeforeMovingToNextJav(t *testing.T) {
 			// Candidate order is shuffled; each JAV's fallback must immediately
 			// follow its primary lookup, before any lookup for the next JAV.
 			for i := 0; i < len(cache.keys); i += 2 {
-				code := strings.TrimPrefix(cache.keys[i], "v5:jav:javdb-api:lookup_jav:")
-				want := []string{"v5:jav:javdb-api:lookup_jav:" + code, task.fallback + code}
+				code := strings.TrimPrefix(cache.keys[i], "v6:jav:javdb-api:lookup_jav:")
+				want := []string{"v6:jav:javdb-api:lookup_jav:" + code, task.fallback + code}
 				if !reflect.DeepEqual(cache.keys[i:i+2], want) {
 					t.Fatalf("provider lookups are not grouped per JAV: %v", cache.keys)
 				}

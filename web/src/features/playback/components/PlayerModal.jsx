@@ -20,6 +20,7 @@ import { zh } from '@/utils/i18n'
 import AppModal from '@/shared/ui/AppModal'
 import { getErrorMessage } from '@/utils/errors'
 import { selectPlaybackSource, startBrowserPlayback } from '@/utils/browserPlayback'
+import { startOnlineHlsPlayback } from '@/utils/onlineHls'
 import { startWatchTracking } from '@/features/playback/watchTime'
 import { createBrowserResume } from '@/features/playback/browserResume'
 import { createPlaybackSession, reportPlaybackSession } from '@/features/playback/api'
@@ -34,6 +35,7 @@ function formatSignedAmount(amount) {
 
 export default function PlayerModal({
   video,
+  online = null,
   playlist = [],
   currentIndex = 0,
   onSelectVideo,
@@ -44,6 +46,9 @@ export default function PlayerModal({
   showHotkeyHint = true,
 }) {
   const isOpen = Boolean(video)
+  // Online playback has no local file, so it skips stream probing, resume
+  // tracking, watch-time sessions, and screenshots.
+  const isOnline = Boolean(online?.src)
   const playerWindow = usePlayerWindow(isOpen)
   const [player, setPlayer] = useState(null)
   const activePlaybackRef = useRef(null)
@@ -121,6 +126,25 @@ export default function PlayerModal({
   }, [video?.id, video?.location_id])
 
   useEffect(() => {
+    if (isOnline) {
+      setLoadingPlayback(false)
+      setPlaybackError('')
+      setScreenshotNotice('')
+      setPlaybackInfo({
+        video,
+        sources: [
+          {
+            kind: online.streamType === 'direct' ? 'direct' : 'hls',
+            src: online.src,
+            mime_type:
+              online.streamType === 'direct' ? 'video/mp4' : 'application/vnd.apple.mpegurl',
+            label: online.provider || zh('网络片源', 'Online stream'),
+          },
+        ],
+      })
+      return
+    }
+
     if (!video?.id) {
       setPlaybackInfo(null)
       setPlaybackError('')
@@ -154,7 +178,7 @@ export default function PlayerModal({
     return () => {
       cancelled = true
     }
-  }, [video])
+  }, [video, isOnline, online])
 
   useEffect(() => {
     if (!isOpen || !videoContainer) return
@@ -225,6 +249,14 @@ export default function PlayerModal({
         }, duration)
       }
       screenshotInFlightRef.current = true
+      if (playback.online) {
+        screenshotInFlightRef.current = false
+        showNotice(
+          zh('在线播放暂不支持截图', 'Screenshots are unavailable for online playback'),
+          2200
+        )
+        return
+      }
       showNotice(zh('已截图', 'Screenshot taken'))
       createVideoScreenshot(video.id, { second, locationId })
         .catch((err) => {
@@ -324,47 +356,61 @@ export default function PlayerModal({
   useEffect(() => {
     if (!player || player.isDisposed() || loadingPlayback || !video || !selectedSource?.src) return
 
-    const playback = { video, locationId: playbackInfo.location_id || video.location_id }
+    const playback = {
+      video,
+      locationId: playbackInfo.location_id || video.location_id,
+      online: isOnline,
+    }
     activePlaybackRef.current = playback
     player.controls(true)
     player.autoplay(true)
-    const stopWatchTracking = startWatchTracking(player, {
-      create: () => createPlaybackSession(video.id, playback.locationId),
-      report: (session, total) => reportPlaybackSession(video.id, session, total),
-    })
-    const resume = createBrowserResume({
-      videoId: video.id,
-      locationId: playback.locationId,
-      enabled: resumePlayback,
-    })
+    const stopWatchTracking = isOnline
+      ? () => {}
+      : startWatchTracking(player, {
+          create: () => createPlaybackSession(video.id, playback.locationId),
+          report: (session, total) => reportPlaybackSession(video.id, session, total),
+        })
+    const resume = isOnline
+      ? { position: 0, record: () => {}, complete: () => {}, flush: () => {} }
+      : createBrowserResume({
+          videoId: video.id,
+          locationId: playback.locationId,
+          enabled: resumePlayback,
+        })
     const hasExplicitStart = startTime != null && Number.isFinite(Number(startTime))
-    const stopPlayback = startBrowserPlayback(
-      player,
-      selectedSource,
-      playbackInfo.sources.find((source) => source.kind === 'hls'),
-      hasExplicitStart ? startTime : resume.position,
-      (error) => {
-        if (activePlaybackRef.current !== playback) return
-        const message = error.message || zh('视频播放失败', 'Video playback failed')
-        setPlaybackError(message)
-      },
-      {
-        resume: !hasExplicitStart,
-        onPosition: resume.record,
-        onEnded: resume.complete,
-        beforeTranscode: async () => {
-          const tools = await fetchTools()
-          if (!tools.ffmpeg?.installed && !tools.ffmpeg?.upgrade_available) {
-            throw new Error(
-              zh(
-                '此视频需要转码播放，但尚未安装 FFmpeg。请前往「设置 → 工具」下载 FFmpeg，安装完成后重新打开视频。',
-                'This video requires transcoding, but FFmpeg is not installed. Download FFmpeg in Settings → Tools, then reopen the video after installation.'
-              )
-            )
-          }
-        },
-      }
-    )
+    const handlePlaybackError = (error) => {
+      if (activePlaybackRef.current !== playback) return
+      const message = error.message || zh('视频播放失败', 'Video playback failed')
+      setPlaybackError(message)
+    }
+    const stopPlayback =
+      isOnline && selectedSource.kind === 'hls'
+        ? startOnlineHlsPlayback(player, selectedSource, { onError: handlePlaybackError })
+        : startBrowserPlayback(
+            player,
+            selectedSource,
+            playbackInfo.sources.find((source) => source.kind === 'hls'),
+            hasExplicitStart ? startTime : resume.position,
+            handlePlaybackError,
+            {
+              resume: !hasExplicitStart,
+              onPosition: resume.record,
+              onEnded: resume.complete,
+              beforeTranscode: isOnline
+                ? undefined
+                : async () => {
+                    const tools = await fetchTools()
+                    if (!tools.ffmpeg?.installed && !tools.ffmpeg?.upgrade_available) {
+                      throw new Error(
+                        zh(
+                          '此视频需要转码播放，但尚未安装 FFmpeg。请前往「设置 → 工具」下载 FFmpeg，安装完成后重新打开视频。',
+                          'This video requires transcoding, but FFmpeg is not installed. Download FFmpeg in Settings → Tools, then reopen the video after installation.'
+                        )
+                      )
+                    }
+                  },
+            }
+          )
     window.addEventListener('pagehide', resume.flush)
     const handleEnded = () => onEndedRef.current?.()
     player.on('ended', handleEnded)
@@ -393,7 +439,16 @@ export default function PlayerModal({
     }
     stopSourceRef.current = stop
     return stop
-  }, [player, video, startTime, resumePlayback, selectedSource, playbackInfo, loadingPlayback])
+  }, [
+    player,
+    video,
+    isOnline,
+    startTime,
+    resumePlayback,
+    selectedSource,
+    playbackInfo,
+    loadingPlayback,
+  ])
 
   if (!video) return null
 

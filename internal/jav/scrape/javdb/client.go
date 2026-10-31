@@ -170,6 +170,50 @@ func (p *JavDBClient) lookupJavDBActressURLByName(ctx context.Context, name stri
 	}
 }
 
+// LookupActressByName resolves an actress profile page by name.
+func (p *JavDBClient) LookupActressByName(ctx context.Context, name string) (*metadata.ActressInfo, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, metadata.ErrNotFound
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	searchURL := javDBActorSearchURL(name)
+	searchDoc, status, err := p.fetchJavDBHTML(ctx, searchURL, javDBBaseURL)
+	if err != nil {
+		return nil, err
+	}
+	if status == http.StatusNotFound || searchDoc == nil {
+		return nil, metadata.ErrNotFound
+	}
+
+	// Only follow an exact, unambiguous actor match to avoid merging another actress' profile.
+	actorURLs := findJavDBActorSearchResultURLs(searchDoc, name, searchURL)
+	if len(actorURLs) != 1 {
+		return nil, metadata.ErrNotFound
+	}
+
+	profileDoc, status, err := p.fetchJavDBHTML(ctx, actorURLs[0], searchURL)
+	if err != nil {
+		return nil, err
+	}
+	if status == http.StatusNotFound || profileDoc == nil {
+		return nil, metadata.ErrNotFound
+	}
+
+	info := parseJavDBActressInfo(profileDoc)
+	if info == nil {
+		return nil, metadata.ErrNotFound
+	}
+	info.ProfileURL = actorURLs[0]
+	if info.JapaneseName == "" && parseutil.ContainsJapaneseRunes(name) {
+		info.JapaneseName = name
+	}
+	return info, nil
+}
+
 // New creates a provider using the supplied non-nil HTTP client.
 func New(httpClient *http.Client) *JavDBClient {
 	return &JavDBClient{httpClient: httpClient, limiter: ratelimit.New(javDBRequestInterval)}

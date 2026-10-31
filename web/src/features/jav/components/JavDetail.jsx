@@ -15,8 +15,10 @@ export default function JavDetail(props) {
     externalLinks,
     preferChineseName,
     canPlay,
+    canPlayOnline,
     detailView,
     handlePlay,
+    handlePlayOnline,
     onOpenJavFavorites,
     setEditorOpen,
     favoriteRating,
@@ -67,10 +69,12 @@ export default function JavDetail(props) {
         externalLinks={externalLinks}
         preferChineseName={preferChineseName}
         canPlay={canPlay}
+        canPlayOnline={canPlayOnline}
         onClose={detailView.onClose}
         initialScrollTop={detailView.scrollTop}
         onScrollChange={detailView.onScrollChange}
         onPlay={handlePlay}
+        onPlayOnline={handlePlayOnline}
         onOpenFavorites={() => onOpenJavFavorites?.(item)}
         onEdit={() => setEditorOpen(true)}
         favoriteRating={favoriteRating}

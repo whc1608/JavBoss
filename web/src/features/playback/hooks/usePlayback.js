@@ -10,6 +10,14 @@ import {
 } from '@/features/video/api'
 import { getErrorMessage } from '@/utils/errors'
 import { confirmLargePlaylist } from '@/features/playback/model'
+import { fetchJavOnlineStream } from '@/features/jav/api'
+import {
+  isJavBossExtensionReady,
+  isOnlineStreamBridgeReady,
+  isOnlineStreamUserscriptReady,
+  resolveOnlineStreamViaExtension,
+  resolveOnlineStreamViaUserscript,
+} from '@/utils/onlineStream'
 import { useStore } from '@/store'
 
 export default function usePlayback({ showCenterToast, showToast }) {
@@ -30,13 +38,24 @@ export default function usePlayback({ showCenterToast, showToast }) {
   const [playerPlaylist, setPlayerPlaylist] = useState([])
   const [playerIndex, setPlayerIndex] = useState(0)
   const [playerStartTime, setPlayerStartTime] = useState(null)
+  const [playerOnline, setPlayerOnline] = useState(null)
   const playerVideo = playerPlaylist[playerIndex] || null
   const openBrowserPlaylist = useCallback((items, startTime = null) => {
+    setPlayerOnline(null)
     setPlayerPlaylist(items)
     setPlayerIndex(0)
     setPlayerStartTime(startTime)
   }, [])
-  const closePlayer = useCallback(() => openBrowserPlaylist([]), [openBrowserPlaylist])
+  const closePlayer = useCallback(() => {
+    setPlayerPlaylist([])
+    setPlayerOnline(null)
+  }, [])
+  const openOnlinePlayer = useCallback((video, online) => {
+    setPlayerPlaylist([video])
+    setPlayerIndex(0)
+    setPlayerStartTime(null)
+    setPlayerOnline(online)
+  }, [])
   const selectPlayerVideo = useCallback(
     (index) => {
       if (!Number.isInteger(index) || index < 0 || index >= playerPlaylist.length) return
@@ -370,6 +389,54 @@ export default function usePlayback({ showCenterToast, showToast }) {
     [playVideos, showCenterToast, handleOpenPlayer]
   )
 
+  const handleJavOnlinePlay = useCallback(
+    async (item) => {
+      const javID = Number(item?.id)
+      const code = String(item?.code || '').trim()
+      if (!Number.isFinite(javID) || javID <= 0 || !code) {
+        showCenterToast(
+          zh(
+            '该条目缺少番号，无法匹配在线片源',
+            'This item has no code, so no online stream can be matched'
+          )
+        )
+        return
+      }
+      try {
+        // Prefer the extension, then the Tampermonkey userscript; both resolve
+        // and relay the stream inside a real browser session. The backend is a
+        // last-resort fallback when neither browser bridge is installed.
+        const source = isJavBossExtensionReady()
+          ? await resolveOnlineStreamViaExtension(code)
+          : isOnlineStreamUserscriptReady()
+            ? await resolveOnlineStreamViaUserscript(code)
+            : await fetchJavOnlineStream(javID)
+        if (!source?.stream_url) {
+          throw new Error(zh('未找到可用的在线片源', 'No online stream was found'))
+        }
+        const provider = String(source.provider || '').trim()
+        openOnlinePlayer(
+          { id: 0, code, filename: provider ? `${code} · ${provider}` : code },
+          {
+            src: source.stream_url,
+            streamType: source.stream_type === 'direct' ? 'direct' : 'hls',
+            provider,
+            pageUrl: source.page_url || '',
+          }
+        )
+      } catch (err) {
+        const hint = isOnlineStreamBridgeReady()
+          ? ''
+          : zh(
+              '（安装 JavBoss 助手扩展，或在 Tampermonkey 中安装「JavBoss 在线片源助手」脚本后可在页面内播放）',
+              ' (Install the JavBoss extension or the JavBoss online stream userscript to play in the page)'
+            )
+        showCenterToast(`${getErrorMessage(err)}${hint}`)
+      }
+    },
+    [openOnlinePlayer, showCenterToast]
+  )
+
   const handleJavOpenFile = useCallback(
     (video, item) => {
       if (!ensureOpenFileAvailable()) return
@@ -612,6 +679,7 @@ export default function usePlayback({ showCenterToast, showToast }) {
     locationPickerChoices,
     locationPickerAction,
     playerVideo,
+    playerOnline,
     playerPlaylist,
     playerIndex,
     selectPlayerVideo,
@@ -639,6 +707,7 @@ export default function usePlayback({ showCenterToast, showToast }) {
     closeJavVideoPicker,
     playVideos,
     handleJavPlay,
+    handleJavOnlinePlay,
     handleJavOpenFile,
     handleJavRevealFile,
     openVideoScreenshots,

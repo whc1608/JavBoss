@@ -9,6 +9,7 @@ type JavInfo struct {
 	Series       string
 	ReleaseUnix  int64
 	DurationMin  int
+	Rating       float64
 	Tags         []string
 	Actors       []string
 	CoverURL     string

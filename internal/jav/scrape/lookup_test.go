@@ -20,7 +20,7 @@ func TestProviderCapabilities(t *testing.T) {
 	}{
 		{ProviderJavBus, true, false, false, false, false, false},
 		{ProviderJavDatabase, true, true, false, false, false, false},
-		{ProviderJavDB, true, false, false, true, true, true},
+		{ProviderJavDB, true, false, true, true, true, true},
 		{ProviderJavDBAPI, true, false, false, true, true, true},
 		{ProviderAvmoo, true, false, false, false, false, false},
 		{ProviderAvsox, true, false, false, false, false, false},

@@ -1,11 +1,18 @@
-import { useState } from 'react'
+import { useContext, useRef, useState } from 'react'
 import Tooltip from '@/shared/ui/Tooltip'
 import CropRoundedIcon from '@mui/icons-material/CropRounded'
+import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded'
 import JavCoverCropModal from '@/features/jav/components/JavCoverCropModal'
 import useJavItemActions from '@/features/jav/hooks/useJavItemActions'
+import { fetchJavSimilar } from '@/features/jav/api'
+import { JavDetailNavigationContext } from '@/navigation/javDetailNavigation'
+import { getErrorMessage } from '@/utils/errors'
 import { JavCoverImage, IdolTagList, JavTagList } from '@/features/jav/components/JavCardTags'
 import { zh } from '@/utils/i18n'
-import { Rating, Popper, IconButton } from '@mui/material'
+import { getJavDisplayTitle } from '@/utils/jav'
+import { preferChineseTitle } from '@/features/jav/titleTranslation'
+import { useStore } from '@/store'
+import { Rating, Popper, IconButton, ClickAwayListener } from '@mui/material'
 import FavoriteRoundedIcon from '@mui/icons-material/FavoriteRounded'
 import FavoriteBorderRoundedIcon from '@mui/icons-material/FavoriteBorderRounded'
 import RemoveCircleOutlineRoundedIcon from '@mui/icons-material/RemoveCircleOutlineRounded'
@@ -16,6 +23,7 @@ import LinkRoundedIcon from '@mui/icons-material/LinkRounded'
 import StarRoundedIcon from '@mui/icons-material/StarRounded'
 import StarBorderRoundedIcon from '@mui/icons-material/StarBorderRounded'
 import SearchIcon from '@mui/icons-material/Search'
+import PortraitOutlinedIcon from '@mui/icons-material/PortraitOutlined'
 import PhotoLibraryOutlinedIcon from '@mui/icons-material/PhotoLibraryOutlined'
 import { ReleaseIcon, DurationIcon } from '@/features/jav/components/JavMetadataIcons'
 import VideocamOutlinedIcon from '@mui/icons-material/VideocamOutlined'
@@ -31,6 +39,65 @@ import WatchTimeIcons from '@/features/playback/components/WatchTimeIcons'
 export default function JavCard(props) {
   const { portrait = false } = props
   const [coverCropEditorOpen, setCoverCropEditorOpen] = useState(false)
+  const [portraitPreviewAnchorEl, setPortraitPreviewAnchorEl] = useState(null)
+  const portraitPreviewTimerRef = useRef(null)
+  const clearPortraitPreviewTimer = () => {
+    if (portraitPreviewTimerRef.current) {
+      window.clearTimeout(portraitPreviewTimerRef.current)
+      portraitPreviewTimerRef.current = null
+    }
+  }
+  const handlePortraitPreviewEnter = (event) => {
+    clearPortraitPreviewTimer()
+    setPortraitPreviewAnchorEl(event.currentTarget)
+  }
+  const handlePortraitPreviewLeave = () => {
+    clearPortraitPreviewTimer()
+    portraitPreviewTimerRef.current = window.setTimeout(() => {
+      setPortraitPreviewAnchorEl(null)
+    }, 120)
+  }
+  const openJavDetail = useContext(JavDetailNavigationContext)
+  const translateTitle = useStore((state) => preferChineseTitle(state.config))
+  const [similarAnchorEl, setSimilarAnchorEl] = useState(null)
+  const [similarItems, setSimilarItems] = useState(null)
+  const [similarLoading, setSimilarLoading] = useState(false)
+  const [similarError, setSimilarError] = useState('')
+  const similarCloseTimerRef = useRef(null)
+  const clearSimilarCloseTimer = () => {
+    if (similarCloseTimerRef.current) {
+      window.clearTimeout(similarCloseTimerRef.current)
+      similarCloseTimerRef.current = null
+    }
+  }
+  const scheduleSimilarClose = () => {
+    clearSimilarCloseTimer()
+    similarCloseTimerRef.current = window.setTimeout(() => {
+      setSimilarAnchorEl(null)
+    }, 250)
+  }
+  const handleToggleSimilar = async (event) => {
+    event.stopPropagation()
+    clearSimilarCloseTimer()
+    if (similarAnchorEl) {
+      setSimilarAnchorEl(null)
+      return
+    }
+    setSimilarAnchorEl(event.currentTarget)
+    if (similarItems || similarLoading) return
+    const javID = Number(props.item?.id)
+    if (!Number.isFinite(javID) || javID <= 0) return
+    setSimilarLoading(true)
+    setSimilarError('')
+    try {
+      const data = await fetchJavSimilar(javID)
+      setSimilarItems(Array.isArray(data?.items) ? data.items : [])
+    } catch (error) {
+      setSimilarError(getErrorMessage(error))
+    } finally {
+      setSimilarLoading(false)
+    }
+  }
   const coverButtonSizeClassName = portrait ? 'h-7 w-7' : 'h-8 w-8'
   const coverSmallButtonSizeClassName = portrait ? 'h-6 w-6' : 'h-7 w-7'
   const favoriteRatingIconSize = portrait ? 18 : 21
@@ -406,6 +473,21 @@ export default function JavCard(props) {
             <div
               className={`card-hover-focus-visible absolute bottom-2 right-2 z-10 flex items-center opacity-0 transition-opacity group-hover:opacity-100 ${portrait ? 'gap-1' : 'gap-2'}`}
             >
+              {cover ? (
+                <button
+                  type="button"
+                  onMouseEnter={handlePortraitPreviewEnter}
+                  onMouseLeave={handlePortraitPreviewLeave}
+                  title={zh('预览竖版封面', 'Preview portrait cover')}
+                  aria-label={zh('预览竖版封面', 'Preview portrait cover')}
+                  className={`card-modal-trigger flex ${coverButtonSizeClassName} items-center justify-center rounded-full bg-black/70 text-white shadow-lg shadow-black/60 hover:bg-black/85`}
+                >
+                  <PortraitOutlinedIcon
+                    className={`text-white ${portrait ? 'h-4 w-4' : 'h-5 w-5'}`}
+                    fontSize="inherit"
+                  />
+                </button>
+              ) : null}
               {portrait && cover && item?.id ? (
                 <button
                   type="button"
@@ -446,6 +528,22 @@ export default function JavCard(props) {
                   fontSize="inherit"
                 />
               </button>
+              {item?.id ? (
+                <button
+                  type="button"
+                  onClick={handleToggleSimilar}
+                  onMouseEnter={clearSimilarCloseTimer}
+                  onMouseLeave={scheduleSimilarClose}
+                  title={zh('相似推荐', 'Similar recommendations')}
+                  aria-label={zh('相似推荐', 'Similar recommendations')}
+                  className={`card-modal-trigger flex ${coverButtonSizeClassName} items-center justify-center rounded-full bg-black/70 text-white shadow-lg shadow-black/60 hover:bg-black/85`}
+                >
+                  <AutoAwesomeRoundedIcon
+                    className={`text-white ${portrait ? 'h-4 w-4' : 'h-5 w-5'}`}
+                    fontSize="inherit"
+                  />
+                </button>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -596,6 +694,188 @@ export default function JavCard(props) {
                 />
               ) : null}
             </div>
+          </Popper>
+          <Popper
+            open={Boolean(portraitPreviewAnchorEl && cover)}
+            anchorEl={portraitPreviewAnchorEl}
+            placement="right-start"
+            className="z-[1400]"
+            modifiers={[
+              {
+                name: 'offset',
+                options: {
+                  offset: [10, 0],
+                },
+              },
+            ]}
+          >
+            <div
+              className="w-[240px] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl"
+              onMouseEnter={clearPortraitPreviewTimer}
+              onMouseLeave={handlePortraitPreviewLeave}
+            >
+              <div
+                className="relative w-full overflow-hidden bg-gray-100"
+                style={{ aspectRatio: `100 / ${coverAspectPercent}` }}
+              >
+                <JavCoverImage
+                  src={cover}
+                  alt={titleText}
+                  portrait
+                  cropPosition={item?.cover_crop_position}
+                />
+              </div>
+              <div className="truncate px-2 py-1.5 text-xs font-medium text-gray-700">
+                {titleText}
+              </div>
+            </div>
+          </Popper>
+          <Popper
+            open={Boolean(similarAnchorEl)}
+            anchorEl={similarAnchorEl}
+            placement="left-end"
+            className="z-[1400]"
+            modifiers={[
+              {
+                name: 'offset',
+                options: {
+                  offset: [0, 8],
+                },
+              },
+            ]}
+          >
+            <ClickAwayListener onClickAway={() => setSimilarAnchorEl(null)}>
+              <div
+                className="w-[320px] rounded-lg border border-gray-200 bg-white p-2 shadow-xl"
+                onMouseEnter={clearSimilarCloseTimer}
+                onMouseLeave={scheduleSimilarClose}
+              >
+                <div className="mb-1 flex items-center justify-between px-1">
+                  <span className="text-xs font-semibold text-gray-600">
+                    {zh('相似推荐', 'Similar recommendations')}
+                  </span>
+                  <span className="text-[11px] text-gray-400">
+                    {zh('按评分排序', 'Sorted by rating')}
+                  </span>
+                </div>
+                {similarLoading ? (
+                  <div className="px-1 py-3 text-center text-xs text-gray-500">
+                    {zh('加载中…', 'Loading…')}
+                  </div>
+                ) : similarError ? (
+                  <div className="px-1 py-3 text-center text-xs text-red-500">{similarError}</div>
+                ) : Array.isArray(similarItems) && similarItems.length > 0 ? (
+                  <div className="flex flex-col">
+                    {similarItems.map((row) => {
+                      const encodedCode = row.code ? encodeURIComponent(row.code.trim()) : ''
+                      const javdbHref = encodedCode
+                        ? `https://javdb.com/search?q=${encodedCode}&f=all`
+                        : ''
+                      const javlibraryHref = encodedCode
+                        ? `https://www.javlibrary.com/cn/vl_searchbyid.php?keyword=${encodedCode}`
+                        : ''
+                      return (
+                        <div
+                          key={row.id}
+                          role="button"
+                          tabIndex={0}
+                          className="card-modal-trigger flex w-full cursor-pointer items-center gap-2 rounded-md p-1.5 text-left transition hover:bg-gray-50"
+                          onClick={() => {
+                            setSimilarAnchorEl(null)
+                            openJavDetail?.({ id: row.id }, { cache: false })
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key !== 'Enter' && event.key !== ' ') return
+                            event.preventDefault()
+                            setSimilarAnchorEl(null)
+                            openJavDetail?.({ id: row.id }, { cache: false })
+                          }}
+                        >
+                          {row.code ? (
+                            <img
+                              src={`/jav/${encodeURIComponent(row.code)}/cover`}
+                              alt={row.code}
+                              loading="lazy"
+                              className="h-[62px] w-[44px] shrink-0 rounded object-cover object-top"
+                            />
+                          ) : (
+                            <div className="flex h-[62px] w-[44px] shrink-0 items-center justify-center rounded bg-gray-100 text-[10px] text-gray-500">
+                              {zh('无封面', 'No cover')}
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-xs font-semibold text-gray-800">
+                              {row.code || zh('未知番号', 'Unknown code')}
+                            </div>
+                            <div
+                              className="text-[11px] leading-4 text-gray-600"
+                              style={{
+                                display: '-webkit-box',
+                                WebkitBoxOrient: 'vertical',
+                                WebkitLineClamp: 2,
+                                overflow: 'hidden',
+                              }}
+                            >
+                              {getJavDisplayTitle(row, translateTitle)}
+                            </div>
+                          </div>
+                          {javdbHref || javlibraryHref ? (
+                            <span className="flex shrink-0 items-center gap-1">
+                              {javdbHref ? (
+                                <a
+                                  href={javdbHref}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title={zh('在 JavDB 中打开', 'Open in JavDB')}
+                                  aria-label={zh('在 JavDB 中打开', 'Open in JavDB')}
+                                  className="flex h-6 w-6 items-center justify-center rounded hover:bg-gray-200"
+                                  onClick={(event) => event.stopPropagation()}
+                                  onKeyDown={(event) => event.stopPropagation()}
+                                >
+                                  <img
+                                    src="/ico/javdb.png"
+                                    alt="JavDB"
+                                    className="h-4 w-4"
+                                    loading="lazy"
+                                  />
+                                </a>
+                              ) : null}
+                              {javlibraryHref ? (
+                                <a
+                                  href={javlibraryHref}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title={zh('在 JavLibrary 中打开', 'Open in JavLibrary')}
+                                  aria-label={zh('在 JavLibrary 中打开', 'Open in JavLibrary')}
+                                  className="flex h-6 w-6 items-center justify-center rounded hover:bg-gray-200"
+                                  onClick={(event) => event.stopPropagation()}
+                                  onKeyDown={(event) => event.stopPropagation()}
+                                >
+                                  <img
+                                    src="/ico/javlibrary.ico"
+                                    alt="JavLibrary"
+                                    className="h-4 w-4"
+                                    loading="lazy"
+                                  />
+                                </a>
+                              ) : null}
+                            </span>
+                          ) : null}
+                          <span className="flex shrink-0 items-center gap-0.5 text-xs font-semibold text-amber-600">
+                            <StarRoundedIcon sx={{ fontSize: 14 }} />
+                            {Number(row.rating) > 0 ? Number(row.rating).toFixed(1) : '—'}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <div className="px-1 py-3 text-center text-xs text-gray-500">
+                    {zh('暂无相似资源', 'No similar items')}
+                  </div>
+                )}
+              </div>
+            </ClickAwayListener>
           </Popper>
           {!hideIdols && Array.isArray(item?.idols) && item.idols.length > 0 && (
             <>
