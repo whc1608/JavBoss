@@ -60,5 +60,6 @@ func getJavOnlineStream(c *gin.Context) {
 		"page_url":    source.PageURL,
 		"stream_url":  source.StreamURL,
 		"stream_type": source.StreamType,
+		"kind":        source.Kind,
 	})
 }

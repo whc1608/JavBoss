@@ -38,6 +38,8 @@ type Source struct {
 	PageURL    string
 	StreamURL  string
 	StreamType string
+	// Kind is "stream" for full videos and "trailer" for provider samples.
+	Kind string
 }
 
 var (
@@ -56,8 +58,13 @@ type cachedSource struct {
 	expires time.Time
 }
 
-// Resolve looks up the first available online stream for a JAV code.
+// Resolve looks up the first available online stream for a JAV code. The
+// Javxy worker is tried first because it does not require browser verification.
 func Resolve(ctx context.Context, code string) (Source, error) {
+	if source, err := resolveJavxy(ctx, code); err == nil {
+		return source, nil
+	}
+
 	slug := jableSlug(code)
 	if slug == "" {
 		return Source{}, ErrNotFound
@@ -144,6 +151,7 @@ func parseJablePage(html, pageURL string) (Source, bool) {
 		PageURL:    pageURL,
 		StreamURL:  stream,
 		StreamType: "hls",
+		Kind:       "stream",
 	}, true
 }
 

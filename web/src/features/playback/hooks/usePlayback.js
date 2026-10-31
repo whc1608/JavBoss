@@ -409,24 +409,38 @@ export default function usePlayback({ showCenterToast, showToast }) {
         return
       }
       try {
-        // Prefer the extension, then the Tampermonkey userscript; both resolve
-        // and relay the stream inside a real browser session. The backend is a
-        // last-resort fallback when neither browser bridge is installed.
-        const source = isJavBossExtensionReady()
-          ? await resolveOnlineStreamViaExtension(code)
-          : isOnlineStreamUserscriptReady()
-            ? await resolveOnlineStreamViaUserscript(code)
-            : await fetchJavOnlineStream(javID)
+        // The backend worker resolves sample streams without browser
+        // verification; browser bridges are only used when it has no result.
+        let source = null
+        let backendError = null
+        try {
+          source = await fetchJavOnlineStream(javID)
+        } catch (err) {
+          backendError = err
+        }
+        if (!source?.stream_url) {
+          if (isJavBossExtensionReady()) {
+            source = await resolveOnlineStreamViaExtension(code)
+          } else if (isOnlineStreamUserscriptReady()) {
+            source = await resolveOnlineStreamViaUserscript(code)
+          } else if (backendError) {
+            throw backendError
+          }
+        }
         if (!source?.stream_url) {
           throw new Error(zh('未找到可用的在线片源', 'No online stream was found'))
         }
         const provider = String(source.provider || '').trim()
+        const isTrailer = String(source.kind || '').toLowerCase() === 'trailer'
+        const providerLabel = isTrailer
+          ? `${provider || zh('在线片源', 'Online stream')}${zh('（预告片）', ' (Trailer)')}`
+          : provider
         openOnlinePlayer(
-          { id: 0, code, filename: provider ? `${code} · ${provider}` : code },
+          { id: 0, code, filename: providerLabel ? `${code} · ${providerLabel}` : code },
           {
             src: source.stream_url,
             streamType: source.stream_type === 'direct' ? 'direct' : 'hls',
-            provider,
+            provider: providerLabel,
             pageUrl: source.page_url || '',
           }
         )
