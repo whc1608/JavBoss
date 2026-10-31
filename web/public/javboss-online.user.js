@@ -3,10 +3,10 @@
 // @namespace    https://github.com/whc1608/JavBoss
 // @version      1.0.0
 // @description  为 JavBoss 页面解析并播放在线片源，无需安装浏览器扩展
-// @match        http://localhost:*/*
-// @match        http://127.0.0.1:*/*
-// @match        https://localhost:*/*
-// @match        https://127.0.0.1:*/*
+// @match        http://localhost/*
+// @match        http://127.0.0.1/*
+// @match        https://localhost/*
+// @match        https://127.0.0.1/*
 // @connect      missav123.com
 // @connect      123av.com
 // @connect      *
