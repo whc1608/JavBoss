@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JavBoss 在线片源助手
 // @namespace    https://github.com/whc1608/JavBoss
-// @version      1.2.1
+// @version      1.2.2
 // @description  为 JavBoss 页面解析并播放在线片源，无需安装浏览器扩展
 // @updateURL    http://localhost:8655/javboss-online.user.js
 // @downloadURL  http://localhost:8655/javboss-online.user.js
@@ -353,7 +353,9 @@
         const message = String(error?.message || error || '')
         if (message === 'challenge') {
           challenged = true
-          challengeURL = attempt.pageURL
+          // Keep the canonical page as the verification hint; later variants
+          // such as -chinese-subtitle are only fallbacks.
+          if (!challengeURL) challengeURL = attempt.pageURL
           trace(`${attempt.provider} ${attempt.pageURL}: Cloudflare 验证拦截`)
           continue
         }
