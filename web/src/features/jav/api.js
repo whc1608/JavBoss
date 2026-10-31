@@ -203,6 +203,20 @@ export async function fetchJavSimilar(id, { limit = 5, includeLocal = true } = {
   return res.json()
 }
 
+export async function fetchJavSimilarFresh(id, { includeLocal = true, refresh = false } = {}) {
+  const params = new URLSearchParams()
+  params.set('include_local', includeLocal ? '1' : '0')
+  if (refresh) params.set('refresh', '1')
+  const res = await apiFetch(
+    `/jav/items/${encodeURIComponent(id)}/similar-fresh?${params.toString()}`,
+    {
+      cache: 'no-store',
+    }
+  )
+  if (!res.ok) throw await apiError(res)
+  return res.json()
+}
+
 export async function fetchJavOnlineStream(id) {
   const res = await apiFetch(`/jav/items/${encodeURIComponent(id)}/online-stream`, {
     cache: 'no-store',

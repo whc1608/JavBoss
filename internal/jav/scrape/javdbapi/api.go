@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -179,6 +180,10 @@ type javDBAPIMovie struct {
 		ThumbURL string `json:"thumb_url"`
 		LargeURL string `json:"large_url"`
 	} `json:"preview_images"`
+	RelativeMovies []struct {
+		ID     javDBAPIValue `json:"id"`
+		Number string        `json:"number"`
+	} `json:"relative_movies"`
 }
 
 // The API can localize title even when Accept-Language is Japanese.
@@ -314,6 +319,75 @@ func (p *JavDBAPIClient) LookupJavByCode(ctx context.Context, code string) (*met
 		info.IsUncensored = &uncensored
 	}
 	return info, nil
+}
+
+// RelatedMoviesByCode returns JavDB's related movies for a code, enriched
+// with titles and scores and sorted by score descending.
+func (p *JavDBAPIClient) RelatedMoviesByCode(ctx context.Context, code string, limit int) ([]metadata.RelatedMovie, error) {
+	movie, err := p.movieByCode(ctx, code)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > 20 {
+		limit = 10
+	}
+	relatives := movie.RelativeMovies
+	if len(relatives) > limit {
+		relatives = relatives[:limit]
+	}
+	out := make([]metadata.RelatedMovie, 0, len(relatives))
+	for _, entry := range relatives {
+		id := strings.TrimSpace(string(entry.ID))
+		if id == "" {
+			continue
+		}
+		ctxDetail, cancel := context.WithTimeout(ctx, 20*time.Second)
+		var data json.RawMessage
+		err := p.get(ctxDetail, "/api/v4/movies/"+url.PathEscape(id), nil, &data)
+		cancel()
+		if err != nil {
+			logging.Info("javdb-api related detail failed: id=%s err=%v", id, err)
+			continue
+		}
+		var nested struct {
+			Movie json.RawMessage `json:"movie"`
+		}
+		_ = json.Unmarshal(data, &nested)
+		body := data
+		if len(nested.Movie) != 0 {
+			body = nested.Movie
+		}
+		var detail javDBAPIMovie
+		if err := json.Unmarshal(body, &detail); err != nil {
+			continue
+		}
+		number := strings.TrimSpace(detail.Number)
+		if number == "" {
+			number = strings.TrimSpace(entry.Number)
+		}
+		if number == "" {
+			continue
+		}
+		var score float64
+		if parsed, err := strconv.ParseFloat(strings.TrimSpace(string(detail.Score)), 64); err == nil && parsed >= 0 && parsed <= 5 {
+			score = parsed
+		}
+		out = append(out, metadata.RelatedMovie{
+			ID:       id,
+			Code:     number,
+			Title:    detail.metadataTitle(),
+			ZhTitle:  strings.TrimSpace(detail.ZhTitle),
+			Rating:   score,
+			CoverURL: parseutil.ResolveSampleImageURL(p.baseURL, detail.CoverURL),
+		})
+	}
+	sort.Slice(out, func(left, right int) bool {
+		if out[left].Rating != out[right].Rating {
+			return out[left].Rating > out[right].Rating
+		}
+		return out[left].Code < out[right].Code
+	})
+	return out, nil
 }
 
 func (p *JavDBAPIClient) LookupActressURLByCodeAndName(ctx context.Context, code, name string) (string, error) {

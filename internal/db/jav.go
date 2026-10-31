@@ -173,6 +173,37 @@ type JavSimilarItem struct {
 	FavoriteRating float64 `json:"favorite_rating"`
 }
 
+// JavCodeInfo summarizes a JAV row for external recommendations.
+type JavCodeInfo struct {
+	ID             int64   `json:"id"`
+	Code           string  `json:"code"`
+	Title          string  `json:"title"`
+	ZhTitle        string  `json:"zh_title"`
+	FavoriteRating float64 `json:"favorite_rating"`
+	HasLocal       bool    `json:"has_local"`
+}
+
+// ListJavsByCodes returns existing rows for the given codes and whether each
+// one has a local video file.
+func (store *Store) ListJavsByCodes(ctx context.Context, codes []string) ([]JavCodeInfo, error) {
+	if len(codes) == 0 {
+		return []JavCodeInfo{}, nil
+	}
+	var rows []JavCodeInfo
+	err := store.conn.WithContext(ctx).Raw(`
+SELECT jav.id, jav.code, jav.title, jav.zh_title, jav.favorite_rating,
+  EXISTS(SELECT 1 FROM video_location vl WHERE vl.jav_id = jav.id) AS has_local
+FROM jav
+WHERE jav.code IN ?`, codes).Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("list javs by codes: %w", err)
+	}
+	if rows == nil {
+		rows = []JavCodeInfo{}
+	}
+	return rows, nil
+}
+
 // ListSimilarJavs recommends items sharing idols, series, studio or tags.
 // Relation strength ranks first; provider rating breaks ties. When
 // includeLocal is false, items with local video files are excluded.

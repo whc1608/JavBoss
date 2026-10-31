@@ -195,6 +195,26 @@ func (c *MetadataClient) LookupMovieURLByCode(ctx context.Context, code string, 
 func LookupJavDBURLByCode(ctx context.Context, code string) (string, error) {
 	return defaultMetadataClient.LookupMovieURLByCode(ctx, code, ProviderJavDB)
 }
+
+type relatedMoviesLookup interface {
+	RelatedMoviesByCode(ctx context.Context, code string, limit int) ([]RelatedMovie, error)
+}
+
+// LookupJavDBRelatedMovies returns JavDB recommendations for a code.
+func LookupJavDBRelatedMovies(ctx context.Context, code string, limit int) ([]RelatedMovie, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	implementation, err := defaultMetadataClient.providerFor(ProviderJavDBAPI)
+	if err != nil {
+		return nil, err
+	}
+	lookup, ok := implementation.(relatedMoviesLookup)
+	if !ok {
+		return nil, fmt.Errorf("%s: related movies: %w", ProviderJavDBAPI, ErrUnsupportedOperation)
+	}
+	return lookup.RelatedMoviesByCode(ctx, code, limit)
+}
 func LookupAvsoxURLByCode(ctx context.Context, code string) (string, error) {
 	return defaultMetadataClient.LookupMovieURLByCode(ctx, code, ProviderAvsox)
 }

@@ -8,8 +8,10 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -270,6 +272,168 @@ func listSimilarJavs(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+type javSimilarFreshItem struct {
+	ID             int64   `json:"id"`
+	Code           string  `json:"code"`
+	Title          string  `json:"title"`
+	ZhTitle        string  `json:"zh_title"`
+	Rating         float64 `json:"rating"`
+	FavoriteRating float64 `json:"favorite_rating"`
+	CoverURL       string  `json:"cover_url"`
+	Local          bool    `json:"local"`
+}
+
+type javSimilarFreshEntry struct {
+	Day       string
+	Items     []javSimilarFreshItem
+	FetchedAt time.Time
+}
+
+var (
+	javSimilarFreshMu    sync.Mutex
+	javSimilarFreshToday = make(map[int64]javSimilarFreshEntry)
+	javSimilarFreshLast  = make(map[int64]javSimilarFreshEntry)
+)
+
+func listSimilarJavsFresh(c *gin.Context) {
+	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || id <= 0 {
+		respondLocalizedError(c, http.StatusBadRequest, "JAV 作品 ID 无效", "Invalid JAV item ID")
+		return
+	}
+	includeLocal := true
+	if raw := strings.TrimSpace(c.Query("include_local")); raw != "" {
+		includeLocal = raw == "1" || strings.EqualFold(raw, "true")
+	}
+	refresh := strings.EqualFold(strings.TrimSpace(c.Query("refresh")), "1") ||
+		strings.EqualFold(strings.TrimSpace(c.Query("refresh")), "true")
+
+	source, err := dbpkg.Default().GetJav(c.Request.Context(), id, nil)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			respondLocalizedError(c, http.StatusNotFound, "JAV 作品不存在", "JAV item was not found")
+			return
+		}
+		logging.Error("load similar source jav id=%d: %v", id, err)
+		respondLocalizedError(c, http.StatusInternalServerError, "加载相似推荐失败", "Failed to load similar recommendations")
+		return
+	}
+	if strings.TrimSpace(source.Code) == "" {
+		respondLocalizedError(c, http.StatusBadRequest, "该作品缺少番号", "This JAV item has no code")
+		return
+	}
+
+	day := time.Now().Format("2006-01-02")
+	javSimilarFreshMu.Lock()
+	todayEntry, hasToday := javSimilarFreshToday[id]
+	hasToday = hasToday && todayEntry.Day == day
+	lastEntry, hasLast := javSimilarFreshLast[id]
+	javSimilarFreshMu.Unlock()
+
+	if hasToday && !refresh {
+		respondJavSimilarFresh(c, todayEntry, includeLocal, false, true, "")
+		return
+	}
+
+	related, err := scrape.LookupJavDBRelatedMovies(c.Request.Context(), source.Code, 12)
+	if err == nil && len(related) > 0 {
+		entry := javSimilarFreshEntry{
+			Day:       day,
+			Items:     mapJavSimilarFresh(c.Request.Context(), related),
+			FetchedAt: time.Now(),
+		}
+		javSimilarFreshMu.Lock()
+		javSimilarFreshToday[id] = entry
+		javSimilarFreshLast[id] = entry
+		javSimilarFreshMu.Unlock()
+		respondJavSimilarFresh(c, entry, includeLocal, false, false, "")
+		return
+	}
+
+	if err != nil {
+		logging.Error("fetch javdb related movies code=%s: %v", source.Code, err)
+	}
+	if hasToday {
+		respondJavSimilarFresh(c, todayEntry, includeLocal, false, true, "刷新失败，显示当天缓存")
+		return
+	}
+	if hasLast {
+		respondJavSimilarFresh(c, lastEntry, includeLocal, true, true, "获取失败，显示上次缓存")
+		return
+	}
+	respondLocalizedError(c, http.StatusBadGateway, "暂时无法从 JavDB 获取推荐", "Failed to load recommendations from JavDB")
+}
+
+func mapJavSimilarFresh(ctx context.Context, related []scrape.RelatedMovie) []javSimilarFreshItem {
+	codes := make([]string, 0, len(related))
+	for _, item := range related {
+		if code := strings.TrimSpace(item.Code); code != "" {
+			codes = append(codes, code)
+		}
+	}
+	rows, err := dbpkg.Default().ListJavsByCodes(ctx, codes)
+	if err != nil {
+		logging.Error("map similar codes: %v", err)
+	}
+	byCode := make(map[string]dbpkg.JavCodeInfo, len(rows))
+	for _, row := range rows {
+		byCode[strings.ToUpper(strings.TrimSpace(row.Code))] = row
+	}
+	items := make([]javSimilarFreshItem, 0, len(related))
+	for _, relatedItem := range related {
+		item := javSimilarFreshItem{
+			Code:     strings.TrimSpace(relatedItem.Code),
+			Title:    strings.TrimSpace(relatedItem.Title),
+			ZhTitle:  strings.TrimSpace(relatedItem.ZhTitle),
+			Rating:   relatedItem.Rating,
+			CoverURL: relatedItem.CoverURL,
+		}
+		if local, ok := byCode[strings.ToUpper(item.Code)]; ok {
+			item.ID = local.ID
+			item.FavoriteRating = local.FavoriteRating
+			item.Local = local.HasLocal
+			if zhTitle := strings.TrimSpace(local.ZhTitle); zhTitle != "" {
+				item.ZhTitle = zhTitle
+			}
+			if title := strings.TrimSpace(local.Title); title != "" && item.Title == "" {
+				item.Title = title
+			}
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+func respondJavSimilarFresh(c *gin.Context, entry javSimilarFreshEntry, includeLocal, stale, cached bool, note string) {
+	items := make([]javSimilarFreshItem, 0, len(entry.Items))
+	for _, item := range entry.Items {
+		if !includeLocal && item.Local {
+			continue
+		}
+		items = append(items, item)
+	}
+	sort.Slice(items, func(left, right int) bool {
+		if items[left].Rating != items[right].Rating {
+			return items[left].Rating > items[right].Rating
+		}
+		return items[left].FavoriteRating > items[right].FavoriteRating
+	})
+	if len(items) > 5 {
+		items = items[:5]
+	}
+	payload := gin.H{
+		"items":      items,
+		"stale":      stale,
+		"cached":     cached,
+		"day":        entry.Day,
+		"fetched_at": entry.FetchedAt.Format(time.RFC3339),
+	}
+	if note != "" {
+		payload["error"] = note
+	}
+	c.JSON(http.StatusOK, payload)
 }
 
 func resolveJavSampleImages(c *gin.Context) {

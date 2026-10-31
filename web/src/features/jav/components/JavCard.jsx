@@ -5,7 +5,7 @@ import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded'
 import JavCoverCropModal from '@/features/jav/components/JavCoverCropModal'
 import useJavItemActions from '@/features/jav/hooks/useJavItemActions'
 import useSimilarIncludeLocal from '@/features/jav/hooks/useSimilarIncludeLocal'
-import { fetchJavSimilar } from '@/features/jav/api'
+import { fetchJavSimilar, fetchJavSimilarFresh } from '@/features/jav/api'
 import { JavDetailNavigationContext } from '@/navigation/javDetailNavigation'
 import { getErrorMessage } from '@/utils/errors'
 import { JavCoverImage, IdolTagList, JavTagList } from '@/features/jav/components/JavCardTags'
@@ -24,6 +24,7 @@ import LinkRoundedIcon from '@mui/icons-material/LinkRounded'
 import StarRoundedIcon from '@mui/icons-material/StarRounded'
 import StarBorderRoundedIcon from '@mui/icons-material/StarBorderRounded'
 import SearchIcon from '@mui/icons-material/Search'
+import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded'
 import PortraitOutlinedIcon from '@mui/icons-material/PortraitOutlined'
 import PhotoLibraryOutlinedIcon from '@mui/icons-material/PhotoLibraryOutlined'
 import { ReleaseIcon, DurationIcon } from '@/features/jav/components/JavMetadataIcons'
@@ -70,6 +71,7 @@ export default function JavCard(props) {
   const [similarAnchorEl, setSimilarAnchorEl] = useState(null)
   const [similarItems, setSimilarItems] = useState(null)
   const [similarJlRatings, setSimilarJlRatings] = useState({})
+  const [similarStale, setSimilarStale] = useState(false)
   const [similarIncludeLocal] = useSimilarIncludeLocal()
   const [similarLoading, setSimilarLoading] = useState(false)
   const [similarError, setSimilarError] = useState('')
@@ -87,18 +89,28 @@ export default function JavCard(props) {
       setSimilarAnchorEl(null)
     }, 250)
   }
-  const loadSimilar = async (includeLocal) => {
+  const loadSimilar = async (includeLocal, { refresh = false } = {}) => {
     const javID = Number(props.item?.id)
     if (!Number.isFinite(javID) || javID <= 0) return
     const requestSeq = (similarRequestRef.current += 1)
     setSimilarLoading(true)
     setSimilarError('')
     setSimilarJlRatings({})
+    let items = []
+    let stale = false
     try {
-      const data = await fetchJavSimilar(javID, { includeLocal })
+      try {
+        const data = await fetchJavSimilarFresh(javID, { includeLocal, refresh })
+        items = Array.isArray(data?.items) ? data.items : []
+        stale = Boolean(data?.stale) || Boolean(data?.error)
+      } catch {
+        const data = await fetchJavSimilar(javID, { includeLocal })
+        items = Array.isArray(data?.items) ? data.items : []
+        stale = true
+      }
       if (similarRequestRef.current !== requestSeq) return
-      const items = Array.isArray(data?.items) ? data.items : []
       setSimilarItems(items)
+      setSimilarStale(stale)
       const codes = items.map((row) => normalizeRatingCode(row?.code)).filter(Boolean)
       const bridge = typeof window === 'undefined' ? null : window.__JAVBOSS_ONLINE_BRIDGE__
       if (codes.length && typeof bridge?.fetchJavLibraryRatings === 'function') {
@@ -115,6 +127,7 @@ export default function JavCard(props) {
     } catch (error) {
       if (similarRequestRef.current !== requestSeq) return
       setSimilarItems([])
+      setSimilarStale(true)
       setSimilarError(getErrorMessage(error))
     } finally {
       if (similarRequestRef.current === requestSeq) setSimilarLoading(false)
@@ -796,12 +809,23 @@ export default function JavCard(props) {
                 onMouseEnter={clearSimilarCloseTimer}
                 onMouseLeave={scheduleSimilarClose}
               >
-                <div className="mb-1 flex items-center justify-between px-1">
-                  <span className="text-xs font-semibold text-gray-600">
+                <div className="mb-1 flex items-center justify-between gap-2 px-1">
+                  <span className="shrink-0 text-xs font-semibold text-gray-600">
                     {zh('相似推荐', 'Similar recommendations')}
                   </span>
-                  <span className="text-[11px] text-gray-400">
-                    {zh('按评分排序', 'Sorted by rating')}
+                  <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-gray-400">
+                    {similarStale ? (
+                      <button
+                        type="button"
+                        className="flex items-center gap-0.5 text-blue-600 hover:underline disabled:opacity-50"
+                        disabled={similarLoading}
+                        onClick={() => loadSimilar(similarIncludeLocal, { refresh: true })}
+                      >
+                        <RefreshRoundedIcon sx={{ fontSize: 13 }} />
+                        {zh('刷新', 'Refresh')}
+                      </button>
+                    ) : null}
+                    <span>{zh('按评分排序', 'Sorted by rating')}</span>
                   </span>
                 </div>
                 {similarLoading ? (
@@ -827,26 +851,35 @@ export default function JavCard(props) {
                         : Number(row.rating) > 0
                           ? Number(row.rating)
                           : 0
+                      const hasItem = Number(row.id) > 0
+                      const openSimilarRow = () => {
+                        setSimilarAnchorEl(null)
+                        if (hasItem) {
+                          openJavDetail?.({ id: row.id }, { cache: false })
+                        } else if (javdbHref) {
+                          window.open(javdbHref, '_blank', 'noopener,noreferrer')
+                        }
+                      }
+                      const coverSrc =
+                        hasItem || !row.cover_url
+                          ? `/jav/${encodeURIComponent(row.code)}/cover`
+                          : row.cover_url
                       return (
                         <div
-                          key={row.id}
+                          key={row.id || row.code}
                           role="button"
                           tabIndex={0}
                           className="card-modal-trigger flex w-full cursor-pointer items-center gap-2 rounded-md p-1.5 text-left transition hover:bg-gray-50"
-                          onClick={() => {
-                            setSimilarAnchorEl(null)
-                            openJavDetail?.({ id: row.id }, { cache: false })
-                          }}
+                          onClick={openSimilarRow}
                           onKeyDown={(event) => {
                             if (event.key !== 'Enter' && event.key !== ' ') return
                             event.preventDefault()
-                            setSimilarAnchorEl(null)
-                            openJavDetail?.({ id: row.id }, { cache: false })
+                            openSimilarRow()
                           }}
                         >
                           {row.code ? (
                             <img
-                              src={`/jav/${encodeURIComponent(row.code)}/cover`}
+                              src={coverSrc}
                               alt={row.code}
                               loading="lazy"
                               className="h-[62px] w-[44px] shrink-0 rounded object-cover object-top"

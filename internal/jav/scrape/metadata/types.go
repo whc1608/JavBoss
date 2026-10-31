@@ -38,6 +38,16 @@ type SampleImage struct {
 	DetailURL    string `json:"detail_url"`
 }
 
+// RelatedMovie is one recommendation returned by a metadata provider.
+type RelatedMovie struct {
+	ID       string
+	Code     string
+	Title    string
+	ZhTitle  string
+	Rating   float64
+	CoverURL string
+}
+
 type GenreCategory struct {
 	Name     string
 	Category string

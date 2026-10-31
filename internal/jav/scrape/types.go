@@ -9,6 +9,7 @@ type Provider = metadata.Provider
 type JavInfo = metadata.JavInfo
 type ActressInfo = metadata.ActressInfo
 type SampleImage = metadata.SampleImage
+type RelatedMovie = metadata.RelatedMovie
 type JavBusGenreCategory = metadata.GenreCategory
 
 const (
