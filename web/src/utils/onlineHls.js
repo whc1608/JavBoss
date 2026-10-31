@@ -25,6 +25,7 @@ class ExtensionStreamLoader {
   constructor() {
     this.stats = createLoadStats()
     this.generation = 0
+    this.referer = ''
   }
 
   load(context, _config, callbacks) {
@@ -34,7 +35,7 @@ class ExtensionStreamLoader {
     this.stats.loading.start = start
     this.stats.trequest = start
 
-    fetchOnlineResource(context.url, { responseType })
+    fetchOnlineResource(context.url, { responseType, referer: this.referer })
       .then((data) => {
         if (generation !== this.generation) return
         const end = performance.now()
@@ -80,7 +81,16 @@ export function canPlayOnlineHls() {
   return Hls.isSupported()
 }
 
-export function startOnlineHlsPlayback(player, source, { onError } = {}) {
+function createExtensionLoader(referer) {
+  return class extends ExtensionStreamLoader {
+    constructor(config) {
+      super(config)
+      this.referer = referer || ''
+    }
+  }
+}
+
+export function startOnlineHlsPlayback(player, source, { onError, referer = '' } = {}) {
   if (!canPlayOnlineHls()) {
     onError?.(
       new Error(
@@ -101,10 +111,11 @@ export function startOnlineHlsPlayback(player, source, { onError } = {}) {
 
   let recoveredNetworkError = false
   let recoveredMediaError = false
+  const Loader = createExtensionLoader(referer)
   const hls = new Hls({
-    loader: ExtensionStreamLoader,
-    pLoader: ExtensionStreamLoader,
-    fLoader: ExtensionStreamLoader,
+    loader: Loader,
+    pLoader: Loader,
+    fLoader: Loader,
     // A blob worker can be blocked by page CSPs; the relay is already async.
     enableWorker: false,
     lowLatencyMode: false,

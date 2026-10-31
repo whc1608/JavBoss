@@ -85,7 +85,7 @@ export async function resolveOnlineStreamViaUserscript(code) {
 // playlist and segment request is relayed through the extension or userscript.
 export async function fetchOnlineResource(
   url,
-  { responseType = 'text', timeout = FETCH_TIMEOUT_MS } = {}
+  { responseType = 'text', timeout = FETCH_TIMEOUT_MS, referer = '' } = {}
 ) {
   if (isJavBossExtensionReady()) {
     const message = await requestOnline(
@@ -102,9 +102,10 @@ export async function fetchOnlineResource(
 
   const bridge = getOnlineUserscriptBridge()
   if (bridge) {
+    const headers = referer ? { Referer: referer } : {}
     let result
     try {
-      result = await bridge.fetchResource(url, responseType)
+      result = await bridge.fetchResource(url, responseType, headers)
     } catch (error) {
       throw new Error(
         String(error?.message || '') || zh('在线片源请求失败', 'The online stream request failed')

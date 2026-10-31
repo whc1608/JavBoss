@@ -33,6 +33,18 @@ function formatSignedAmount(amount) {
   return amount > 0 ? `+${amount}` : String(amount)
 }
 
+// Some providers expose their own player page instead of a raw media URL.
+// Hide the video.js element and let the provider player run inside the modal.
+function startOnlineIframePlayback(player, source, setIframeUrl) {
+  const element = player?.el?.()
+  if (element) element.style.display = 'none'
+  setIframeUrl(source.src)
+  return () => {
+    setIframeUrl('')
+    if (element) element.style.display = ''
+  }
+}
+
 export default function PlayerModal({
   video,
   online = null,
@@ -48,9 +60,10 @@ export default function PlayerModal({
   const isOpen = Boolean(video)
   // Online playback has no local file, so it skips stream probing, resume
   // tracking, watch-time sessions, and screenshots.
-  const isOnline = Boolean(online?.src)
+  const isOnline = Boolean(online?.src || online?.iframeUrl)
   const playerWindow = usePlayerWindow(isOpen)
   const [player, setPlayer] = useState(null)
+  const [onlineIframeUrl, setOnlineIframeUrl] = useState('')
   const activePlaybackRef = useRef(null)
   const stopSourceRef = useRef(null)
   const [videoContainer, setVideoContainer] = useState(null)
@@ -134,10 +147,13 @@ export default function PlayerModal({
         video,
         sources: [
           {
-            kind: online.streamType === 'direct' ? 'direct' : 'hls',
-            src: online.src,
-            mime_type:
-              online.streamType === 'direct' ? 'video/mp4' : 'application/vnd.apple.mpegurl',
+            kind: online.iframeUrl ? 'iframe' : online.streamType === 'direct' ? 'direct' : 'hls',
+            src: online.iframeUrl || online.src,
+            mime_type: online.iframeUrl
+              ? ''
+              : online.streamType === 'direct'
+                ? 'video/mp4'
+                : 'application/vnd.apple.mpegurl',
             label: online.provider || zh('网络片源', 'Online stream'),
           },
         ],
@@ -384,33 +400,38 @@ export default function PlayerModal({
       setPlaybackError(message)
     }
     const stopPlayback =
-      isOnline && selectedSource.kind === 'hls'
-        ? startOnlineHlsPlayback(player, selectedSource, { onError: handlePlaybackError })
-        : startBrowserPlayback(
-            player,
-            selectedSource,
-            playbackInfo.sources.find((source) => source.kind === 'hls'),
-            hasExplicitStart ? startTime : resume.position,
-            handlePlaybackError,
-            {
-              resume: !hasExplicitStart,
-              onPosition: resume.record,
-              onEnded: resume.complete,
-              beforeTranscode: isOnline
-                ? undefined
-                : async () => {
-                    const tools = await fetchTools()
-                    if (!tools.ffmpeg?.installed && !tools.ffmpeg?.upgrade_available) {
-                      throw new Error(
-                        zh(
-                          '此视频需要转码播放，但尚未安装 FFmpeg。请前往「设置 → 工具」下载 FFmpeg，安装完成后重新打开视频。',
-                          'This video requires transcoding, but FFmpeg is not installed. Download FFmpeg in Settings → Tools, then reopen the video after installation.'
+      isOnline && selectedSource.kind === 'iframe'
+        ? startOnlineIframePlayback(player, selectedSource, setOnlineIframeUrl)
+        : isOnline && selectedSource.kind === 'hls'
+          ? startOnlineHlsPlayback(player, selectedSource, {
+              onError: handlePlaybackError,
+              referer: online?.referer || '',
+            })
+          : startBrowserPlayback(
+              player,
+              selectedSource,
+              playbackInfo.sources.find((source) => source.kind === 'hls'),
+              hasExplicitStart ? startTime : resume.position,
+              handlePlaybackError,
+              {
+                resume: !hasExplicitStart,
+                onPosition: resume.record,
+                onEnded: resume.complete,
+                beforeTranscode: isOnline
+                  ? undefined
+                  : async () => {
+                      const tools = await fetchTools()
+                      if (!tools.ffmpeg?.installed && !tools.ffmpeg?.upgrade_available) {
+                        throw new Error(
+                          zh(
+                            '此视频需要转码播放，但尚未安装 FFmpeg。请前往「设置 → 工具」下载 FFmpeg，安装完成后重新打开视频。',
+                            'This video requires transcoding, but FFmpeg is not installed. Download FFmpeg in Settings → Tools, then reopen the video after installation.'
+                          )
                         )
-                      )
-                    }
-                  },
-            }
-          )
+                      }
+                    },
+              }
+            )
     window.addEventListener('pagehide', resume.flush)
     const handleEnded = () => onEndedRef.current?.()
     player.on('ended', handleEnded)
@@ -443,6 +464,7 @@ export default function PlayerModal({
     player,
     video,
     isOnline,
+    online?.referer,
     startTime,
     resumePlayback,
     selectedSource,
@@ -541,7 +563,18 @@ export default function PlayerModal({
                 ) : null}
               </div>
             ) : null}
-            <div ref={setVideoContainer} data-vjs-player className="h-full w-full" />
+            <div ref={setVideoContainer} data-vjs-player className="h-full w-full">
+              {onlineIframeUrl ? (
+                <iframe
+                  src={onlineIframeUrl}
+                  title={displayName || zh('在线播放器', 'Online player')}
+                  className="h-full w-full border-0 bg-black"
+                  allow="autoplay; fullscreen; picture-in-picture"
+                  allowFullScreen
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
+              ) : null}
+            </div>
             {loadingPlayback || playbackInfo?.video !== video ? (
               <div
                 data-player-loading

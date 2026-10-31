@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JavBoss 在线片源助手
 // @namespace    https://github.com/whc1608/JavBoss
-// @version      1.1.0
+// @version      1.2.0
 // @description  为 JavBoss 页面解析并播放在线片源，无需安装浏览器扩展
 // @updateURL    http://localhost:8655/javboss-online.user.js
 // @downloadURL  http://localhost:8655/javboss-online.user.js
@@ -121,7 +121,23 @@
     )
   }
 
-  function gmRequest(url, responseType) {
+  function resolveURL(value, base) {
+    try {
+      const parsed = new URL(String(value || '').trim(), base || undefined)
+      return /^https?:$/i.test(parsed.protocol) ? parsed.href : ''
+    } catch {
+      return ''
+    }
+  }
+
+  function gmRequest(url, responseType, extraHeaders = {}) {
+    const headers = {
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      ...(responseType === 'text' && !extraHeaders.Accept
+        ? { Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8' }
+        : {}),
+      ...extraHeaders,
+    }
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method: 'GET',
@@ -129,9 +145,8 @@
         timeout: REQUEST_TIMEOUT,
         responseType,
         anonymous: false,
-        headers: {
-          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        },
+        headers,
+        referer: extraHeaders.Referer || undefined,
         onload: resolve,
         onerror: () => reject(new Error('Failed to fetch')),
         ontimeout: () => reject(new Error('请求超时')),
@@ -140,12 +155,135 @@
     })
   }
 
-  async function fetchText(url) {
-    const response = await gmRequest(url, 'text')
+  async function fetchText(url, headers = {}) {
+    const response = await gmRequest(url, 'text', headers)
     const text = String(response.responseText || '')
     if (isChallengePage(text)) throw new Error('challenge')
     if (response.status < 200 || response.status >= 300) throw new Error(`HTTP ${response.status}`)
     return text
+  }
+
+  function get123avSlug(code) {
+    const raw = String(code || '').trim().toLowerCase()
+    if (!raw) return ''
+    const fc2 = raw.match(/^(?:fc2[-_ ]*(?:ppv[-_ ]*)?)?(\d{6,9})$/)
+    if (fc2) return `fc2-ppv-${fc2[1]}`
+    const dated = raw.match(/^(\d{6})[_-](\d{2,3})$/)
+    if (dated) {
+      const prefix =
+        dated[2].length === 2 ? '10musume' : dated[2] === '100' ? 'pacopacomama' : ''
+      if (prefix) return `${prefix}-${dated[1]}-${dated[2]}`
+    }
+    const caribbean = raw.match(/^(\d{6}-\d{3})$/)
+    if (caribbean) return `caribbeancom-${caribbean[1]}`
+    return raw.replace(/[_\s]+/g, '-')
+  }
+
+  function detailCandidates123(code) {
+    const slug = get123avSlug(code)
+    if (!slug) return []
+    const url = `https://123av.com/cn/v/${slug}`
+    const eligible =
+      slug === String(code || '').trim().toLowerCase() &&
+      /^[a-z]{2,10}-\d{2,5}$/.test(slug) &&
+      !slug.startsWith('heyzo-')
+    if (!eligible) return [url]
+    const leaked = url.replace(/\/v\/[^/]+\/?$/i, `/v/${slug}-uncensored-leaked`)
+    return leaked === url ? [url] : [leaked, url]
+  }
+
+  function decodePlayerEntries(value, base) {
+    const match = String(value || '').match(/player\(JSON\.parse\('([\s\S]*?)'\)/i)
+    if (!match) return []
+    const raw = match[1]
+      .replace(/\\u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16)))
+      .replace(/\\\//g, '/')
+      .replace(/\\\\/g, '\\')
+      .replace(/\\'/g, "'")
+    let list
+    try {
+      list = JSON.parse(raw)
+    } catch {
+      return []
+    }
+    if (!Array.isArray(list)) return []
+    return list.flatMap((entry, index) => {
+      const url = resolveURL(entry?.url || entry?.src || entry?.file, base)
+      return url ? [{ url, number: entry?.number ?? entry?.episode ?? index + 1 }] : []
+    })
+  }
+
+  function mediaFromText(text, base) {
+    const source = String(text || '')
+    const parsed = parse123avDocument(source)
+    const parsedURL = resolveURL(parsed, base)
+    if (parsedURL) {
+      return { url: parsedURL, type: /\.m3u8(?:[?#]|$)/i.test(parsedURL) ? 'hls' : 'direct' }
+    }
+    const matches = source.match(/https?:\/\/[^\s"'<>`\\]+\.(?:m3u8|mp4|webm)(?:\?[^\s"'<>`\\]*)?/gi) || []
+    const hls = matches.find((url) => /\.m3u8(?:[?#]|$)/i.test(url))
+    if (hls) return { url: resolveURL(hls, base) || hls, type: 'hls' }
+    const video = matches.find((url) => /\.(?:mp4|webm)(?:[?#]|$)/i.test(url))
+    if (video) return { url: resolveURL(video, base) || video, type: 'direct' }
+    return null
+  }
+
+  async function resolve123av(code) {
+    const pageHeaders = {
+      Referer: 'https://123av.com/',
+      Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+    }
+    for (const detail of detailCandidates123(code)) {
+      let response
+      try {
+        response = await gmRequest(detail, 'text', pageHeaders)
+      } catch (error) {
+        if (String(error?.message || '') === 'Failed to fetch') throw error
+        continue
+      }
+      const text = String(response.responseText || '')
+      const ok = response.status >= 200 && response.status < 300
+      if (!ok || isChallengePage(text)) continue
+      const document = new DOMParser().parseFromString(text, 'text/html')
+      const entries = decodePlayerEntries(
+        document.querySelector('.watch__main[x-data], .watch__main')?.getAttribute('x-data') || '',
+        detail
+      )
+      const player = entries.find((entry) => String(entry.number) === '1') || entries[0]
+      if (!player?.url) continue
+      let playerResponse
+      try {
+        playerResponse = await gmRequest(player.url, 'text', {
+          Referer: detail,
+          Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+        })
+      } catch {
+        continue
+      }
+      const playerText = String(playerResponse.responseText || '')
+      const playerOk = playerResponse.status >= 200 && playerResponse.status < 300
+      if (!playerOk || isChallengePage(playerText)) continue
+      const media = mediaFromText(playerText, player.url) || mediaFromText(text, detail)
+      if (media) {
+        return {
+          provider: '123AV',
+          page_url: detail,
+          stream_url: media.url,
+          stream_type: media.type,
+          referer: detail,
+          kind: 'stream',
+        }
+      }
+      return {
+        provider: '123AV',
+        page_url: detail,
+        iframe_url: player.url,
+        stream_type: 'iframe',
+        referer: detail,
+        kind: 'stream',
+      }
+    }
+    return null
   }
 
   const resolveCache = new Map()
@@ -164,16 +302,6 @@
         pageURL: `https://missav123.com/cn/${slug}-chinese-subtitle`,
         parse: (html) => parseMissavDocument(html, slug),
       },
-      {
-        provider: '123AV',
-        pageURL: `https://123av.com/cn/v/${slug}`,
-        parse: parse123avDocument,
-      },
-      {
-        provider: '123AV',
-        pageURL: `https://123av.com/cn/v/${slug}-uncensored-leaked`,
-        parse: parse123avDocument,
-      },
     ]
   }
 
@@ -187,7 +315,7 @@
     const errors = []
     for (const attempt of resolveAttempts(code)) {
       try {
-        const html = await fetchText(attempt.pageURL)
+        const html = await fetchText(attempt.pageURL, { Referer: attempt.pageURL })
         const url = attempt.parse(html)
         if (!url) continue
         const source = {
@@ -195,6 +323,8 @@
           page_url: attempt.pageURL,
           stream_url: url,
           stream_type: streamTypeOf(url),
+          referer: attempt.pageURL,
+          kind: 'stream',
         }
         resolveCache.set(key, { source, expiresAt: Date.now() + ONLINE_CACHE_TTL })
         return source
@@ -208,6 +338,21 @@
         errors.push(message)
       }
     }
+
+    // 123AV keeps the full player behind a detail page, so follow the same
+    // detail -> player page chain the JAV 老司机 userscript uses.
+    try {
+      const source = await resolve123av(code)
+      if (source) {
+        resolveCache.set(key, { source, expiresAt: Date.now() + ONLINE_CACHE_TTL })
+        return source
+      }
+    } catch (error) {
+      const message = String(error?.message || error || '')
+      if (message === 'Failed to fetch') throw new Error(MISSING_PERMISSION)
+      errors.push(message)
+    }
+
     if (challenged) throw new Error(challengeError(challengeURL))
     if (errors.some((message) => message === 'Failed to fetch')) throw new Error(MISSING_PERMISSION)
     throw new Error('未找到可用的在线片源')
@@ -234,11 +379,11 @@
     }
   }
 
-  async function fetchResource(url, responseType) {
+  async function fetchResource(url, responseType, headers = {}) {
     const target = validHttpURL(url)
     if (!target) return { ok: false, error: '无效的视频流地址' }
     const type = responseType === 'arrayBuffer' ? 'arraybuffer' : 'text'
-    const response = await gmRequest(target, type)
+    const response = await gmRequest(target, type, headers)
     const ok = response.status >= 200 && response.status < 300
     const result = { ok, status: response.status }
     if (!ok) {
@@ -260,6 +405,6 @@
   pageWindow.__JAVBOSS_ONLINE_BRIDGE__ = {
     version: BRIDGE_VERSION,
     resolve: (code) => resolveOnlineStream(code),
-    fetchResource: (url, responseType) => fetchResource(url, responseType),
+    fetchResource: (url, responseType, headers) => fetchResource(url, responseType, headers),
   }
 })()

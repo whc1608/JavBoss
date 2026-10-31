@@ -409,37 +409,51 @@ export default function usePlayback({ showCenterToast, showToast }) {
         return
       }
       try {
-        // The backend worker resolves sample streams without browser
-        // verification; browser bridges are only used when it has no result.
+        // Browser bridges can reach the full-video players, while the backend
+        // worker serves a sample stream when the providers block the relay.
         let source = null
-        let backendError = null
-        try {
-          source = await fetchJavOnlineStream(javID)
-        } catch (err) {
-          backendError = err
-        }
-        if (!source?.stream_url) {
-          if (isJavBossExtensionReady()) {
+        let bridgeError = null
+        if (isJavBossExtensionReady()) {
+          try {
             source = await resolveOnlineStreamViaExtension(code)
-          } else if (isOnlineStreamUserscriptReady()) {
+          } catch (err) {
+            bridgeError = err
+          }
+        } else if (isOnlineStreamUserscriptReady()) {
+          try {
             source = await resolveOnlineStreamViaUserscript(code)
-          } else if (backendError) {
-            throw backendError
+          } catch (err) {
+            bridgeError = err
           }
         }
-        if (!source?.stream_url) {
-          throw new Error(zh('未找到可用的在线片源', 'No online stream was found'))
+        if (!source?.stream_url && !source?.iframe_url) {
+          try {
+            source = await fetchJavOnlineStream(javID)
+          } catch (err) {
+            if (!bridgeError) throw err
+          }
+        }
+        if (!source?.stream_url && !source?.iframe_url) {
+          throw bridgeError || new Error(zh('未找到可用的在线片源', 'No online stream was found'))
         }
         const provider = String(source.provider || '').trim()
         const isTrailer = String(source.kind || '').toLowerCase() === 'trailer'
         const providerLabel = isTrailer
           ? `${provider || zh('在线片源', 'Online stream')}${zh('（预告片）', ' (Trailer)')}`
           : provider
+        const streamType =
+          source.stream_type === 'iframe'
+            ? 'iframe'
+            : source.stream_type === 'direct'
+              ? 'direct'
+              : 'hls'
         openOnlinePlayer(
           { id: 0, code, filename: providerLabel ? `${code} · ${providerLabel}` : code },
           {
-            src: source.stream_url,
-            streamType: source.stream_type === 'direct' ? 'direct' : 'hls',
+            src: source.stream_url || '',
+            streamType,
+            iframeUrl: source.iframe_url || '',
+            referer: source.referer || '',
             provider: providerLabel,
             pageUrl: source.page_url || '',
           }
