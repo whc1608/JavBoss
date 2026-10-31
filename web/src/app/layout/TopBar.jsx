@@ -11,7 +11,7 @@ import FolderRoundedIcon from '@mui/icons-material/FolderRounded'
 import SearchIcon from '@mui/icons-material/Search'
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'
 import ShuffleOutlinedIcon from '@mui/icons-material/ShuffleOutlined'
-import { Button, IconButton, Menu, MenuItem, Popper, Slider } from '@mui/material'
+import { Button, IconButton, Menu, MenuItem, Popper, Slider, Switch } from '@mui/material'
 import {
   formatIdolProfileFilterRange,
   IDOL_PROFILE_FILTER_DEFINITIONS,
@@ -386,6 +386,8 @@ export default function TopBar({
   onIdolProfileFilterChange,
   onHome,
   onRandomClick,
+  similarIncludeLocal = true,
+  onSimilarIncludeLocalChange,
   onOpenFavoriteGroups,
   onOpenFilterEditor,
   onOpenFavoriteManager,
@@ -607,6 +609,25 @@ export default function TopBar({
               <ShuffleOutlinedIcon fontSize="small" />
               <span>{zh('随机', 'Random')}</span>
             </button>
+          ) : null}
+
+          {onSimilarIncludeLocalChange ? (
+            <label
+              className="filter-action-button cursor-pointer select-none"
+              title={zh(
+                '推荐内容是否包含已在本地仓库的作品',
+                'Include items already in the local library'
+              )}
+            >
+              <Switch
+                size="small"
+                checked={Boolean(similarIncludeLocal)}
+                onChange={(event) => onSimilarIncludeLocalChange(event.target.checked)}
+                inputProps={{ 'aria-label': zh('包含本地已有', 'Include local items') }}
+                sx={{ ml: 0.25, mr: -0.5 }}
+              />
+              <span>{zh('含本地', 'Include local')}</span>
+            </label>
           ) : null}
 
           {showFilterCluster ? (

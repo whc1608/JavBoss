@@ -17,6 +17,7 @@ import useSectionNavigation from '@/navigation/useSectionNavigation'
 import useDocumentTitle from '@/shared/hooks/useDocumentTitle'
 import { buildLibraryPageTitle, formatPageTitle } from '@/navigation/pageTitle'
 import useJavSelection from '@/features/jav/hooks/useJavSelection'
+import useSimilarIncludeLocal from '@/features/jav/hooks/useSimilarIncludeLocal'
 import SideTabs from '@/app/layout/SideTabs'
 import TopBar from '@/app/layout/TopBar'
 import {
@@ -500,6 +501,8 @@ export default function App() {
     onTagClick: handleJavTagClick,
   }
 
+  const [similarIncludeLocal, setSimilarIncludeLocal] = useSimilarIncludeLocal()
+
   return (
     <div className="app-shell min-h-screen">
       <SideTabs
@@ -639,6 +642,10 @@ export default function App() {
         }
         onRandomClick={
           !isJavMode ? handleVideoRandomClick : javTab === 'list' ? handleJavRandomClick : null
+        }
+        similarIncludeLocal={similarIncludeLocal}
+        onSimilarIncludeLocalChange={
+          isJavMode && javTab === 'list' ? setSimilarIncludeLocal : undefined
         }
         onSearchInputChange={isJavMode ? setJavSearchInput : setSearchInput}
         onSubmitSearch={isJavMode ? submitJavSearch : submitSearch}

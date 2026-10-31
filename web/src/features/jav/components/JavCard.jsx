@@ -1,9 +1,10 @@
-import { useContext, useRef, useState } from 'react'
+import { useContext, useMemo, useRef, useState } from 'react'
 import Tooltip from '@/shared/ui/Tooltip'
 import CropRoundedIcon from '@mui/icons-material/CropRounded'
 import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded'
 import JavCoverCropModal from '@/features/jav/components/JavCoverCropModal'
 import useJavItemActions from '@/features/jav/hooks/useJavItemActions'
+import useSimilarIncludeLocal from '@/features/jav/hooks/useSimilarIncludeLocal'
 import { fetchJavSimilar } from '@/features/jav/api'
 import { JavDetailNavigationContext } from '@/navigation/javDetailNavigation'
 import { getErrorMessage } from '@/utils/errors'
@@ -12,7 +13,7 @@ import { zh } from '@/utils/i18n'
 import { getJavDisplayTitle } from '@/utils/jav'
 import { preferChineseTitle } from '@/features/jav/titleTranslation'
 import { useStore } from '@/store'
-import { Rating, Popper, IconButton, ClickAwayListener, Switch } from '@mui/material'
+import { Rating, Popper, IconButton, ClickAwayListener } from '@mui/material'
 import FavoriteRoundedIcon from '@mui/icons-material/FavoriteRounded'
 import FavoriteBorderRoundedIcon from '@mui/icons-material/FavoriteBorderRounded'
 import RemoveCircleOutlineRoundedIcon from '@mui/icons-material/RemoveCircleOutlineRounded'
@@ -69,7 +70,7 @@ export default function JavCard(props) {
   const [similarAnchorEl, setSimilarAnchorEl] = useState(null)
   const [similarItems, setSimilarItems] = useState(null)
   const [similarJlRatings, setSimilarJlRatings] = useState({})
-  const [similarIncludeLocal, setSimilarIncludeLocal] = useState(true)
+  const [similarIncludeLocal] = useSimilarIncludeLocal()
   const [similarLoading, setSimilarLoading] = useState(false)
   const [similarError, setSimilarError] = useState('')
   const similarCloseTimerRef = useRef(null)
@@ -127,16 +128,22 @@ export default function JavCard(props) {
       return
     }
     setSimilarAnchorEl(event.currentTarget)
-    if (similarItems || similarLoading) return
+    if (similarLoading) return
     await loadSimilar(similarIncludeLocal)
   }
-  const handleSimilarIncludeLocalChange = (event) => {
-    const includeLocal = event.target.checked
-    setSimilarIncludeLocal(includeLocal)
-    if (!similarAnchorEl) return
-    setSimilarItems(null)
-    void loadSimilar(includeLocal)
-  }
+  const similarDisplayItems = useMemo(() => {
+    const list = Array.isArray(similarItems) ? [...similarItems] : []
+    const ratingOf = (row) => {
+      const jlRating = similarJlRatings[normalizeRatingCode(row?.code)]
+      if (Number.isFinite(jlRating)) return jlRating
+      return Number(row?.rating) || 0
+    }
+    return list.sort(
+      (left, right) =>
+        ratingOf(right) - ratingOf(left) ||
+        (Number(right?.favorite_rating) || 0) - (Number(left?.favorite_rating) || 0)
+    )
+  }, [similarItems, similarJlRatings])
   const coverButtonSizeClassName = portrait ? 'h-7 w-7' : 'h-8 w-8'
   const coverSmallButtonSizeClassName = portrait ? 'h-6 w-6' : 'h-7 w-7'
   const favoriteRatingIconSize = portrait ? 18 : 21
@@ -789,25 +796,13 @@ export default function JavCard(props) {
                 onMouseEnter={clearSimilarCloseTimer}
                 onMouseLeave={scheduleSimilarClose}
               >
-                <div className="mb-1 flex items-center justify-between gap-2 px-1">
-                  <span className="shrink-0 text-xs font-semibold text-gray-600">
+                <div className="mb-1 flex items-center justify-between px-1">
+                  <span className="text-xs font-semibold text-gray-600">
                     {zh('相似推荐', 'Similar recommendations')}
                   </span>
-                  <label
-                    className="flex cursor-pointer items-center gap-1 text-[11px] text-gray-500"
-                    title={zh(
-                      '推荐内容是否包含已在本地仓库的作品',
-                      'Include items already in the local library'
-                    )}
-                  >
-                    <Switch
-                      size="small"
-                      checked={similarIncludeLocal}
-                      onChange={handleSimilarIncludeLocalChange}
-                      inputProps={{ 'aria-label': zh('包含本地已有', 'Include local items') }}
-                    />
-                    {zh('含本地', 'Include local')}
-                  </label>
+                  <span className="text-[11px] text-gray-400">
+                    {zh('按评分排序', 'Sorted by rating')}
+                  </span>
                 </div>
                 {similarLoading ? (
                   <div className="px-1 py-3 text-center text-xs text-gray-500">
@@ -815,9 +810,9 @@ export default function JavCard(props) {
                   </div>
                 ) : similarError ? (
                   <div className="px-1 py-3 text-center text-xs text-red-500">{similarError}</div>
-                ) : Array.isArray(similarItems) && similarItems.length > 0 ? (
+                ) : similarDisplayItems.length > 0 ? (
                   <div className="flex flex-col">
-                    {similarItems.map((row) => {
+                    {similarDisplayItems.map((row) => {
                       const encodedCode = row.code ? encodeURIComponent(row.code.trim()) : ''
                       const javdbHref = encodedCode
                         ? `https://javdb.com/search?q=${encodedCode}&f=all`
