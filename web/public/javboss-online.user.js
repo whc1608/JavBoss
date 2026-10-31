@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JavBoss 在线片源助手
 // @namespace    https://github.com/whc1608/JavBoss
-// @version      1.2.0
+// @version      1.2.1
 // @description  为 JavBoss 页面解析并播放在线片源，无需安装浏览器扩展
 // @updateURL    http://localhost:8655/javboss-online.user.js
 // @downloadURL  http://localhost:8655/javboss-online.user.js
@@ -243,12 +243,15 @@
       }
       const text = String(response.responseText || '')
       const ok = response.status >= 200 && response.status < 300
-      if (!ok || isChallengePage(text)) continue
+      if (!ok || isChallengePage(text)) {
+        trace(`123AV ${detail}: HTTP ${response.status}${isChallengePage(text) ? '（Cloudflare 验证）' : ''}`)
+        continue
+      }
       const document = new DOMParser().parseFromString(text, 'text/html')
-      const entries = decodePlayerEntries(
-        document.querySelector('.watch__main[x-data], .watch__main')?.getAttribute('x-data') || '',
-        detail
-      )
+      const xData =
+        document.querySelector('.watch__main[x-data], .watch__main')?.getAttribute('x-data') || ''
+      const entries = decodePlayerEntries(xData, detail)
+      trace(`123AV ${detail}: x-data 播放条目 ${entries.length}`)
       const player = entries.find((entry) => String(entry.number) === '1') || entries[0]
       if (!player?.url) continue
       let playerResponse
@@ -257,14 +260,21 @@
           Referer: detail,
           Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
         })
-      } catch {
+      } catch (error) {
+        trace(`123AV player ${player.url}: ${String(error?.message || error || '')}`)
         continue
       }
       const playerText = String(playerResponse.responseText || '')
       const playerOk = playerResponse.status >= 200 && playerResponse.status < 300
-      if (!playerOk || isChallengePage(playerText)) continue
+      if (!playerOk || isChallengePage(playerText)) {
+        trace(
+          `123AV player ${player.url}: HTTP ${playerResponse.status}${isChallengePage(playerText) ? '（Cloudflare 验证）' : ''}`
+        )
+        continue
+      }
       const media = mediaFromText(playerText, player.url) || mediaFromText(text, detail)
       if (media) {
+        trace(`123AV player ${player.url}: 解析到 ${media.type}`)
         return {
           provider: '123AV',
           page_url: detail,
@@ -274,6 +284,7 @@
           kind: 'stream',
         }
       }
+      trace(`123AV player ${player.url}: 未解析到媒体地址，改用 iframe 播放`)
       return {
         provider: '123AV',
         page_url: detail,
@@ -287,6 +298,11 @@
   }
 
   const resolveCache = new Map()
+  let debugTrace = []
+
+  function trace(message) {
+    debugTrace.push(String(message || ''))
+  }
 
   function resolveAttempts(code) {
     const slug = normalizeCode(code)
@@ -306,6 +322,7 @@
   }
 
   async function resolveOnlineStream(code) {
+    debugTrace = []
     const key = normalizeCode(code)
     const cached = resolveCache.get(key)
     if (cached && cached.expiresAt > Date.now()) return cached.source
@@ -317,7 +334,10 @@
       try {
         const html = await fetchText(attempt.pageURL, { Referer: attempt.pageURL })
         const url = attempt.parse(html)
-        if (!url) continue
+        if (!url) {
+          trace(`${attempt.provider} ${attempt.pageURL}: 页面已加载但未解析到播放地址`)
+          continue
+        }
         const source = {
           provider: attempt.provider,
           page_url: attempt.pageURL,
@@ -326,6 +346,7 @@
           referer: attempt.pageURL,
           kind: 'stream',
         }
+        trace(`${attempt.provider} ${attempt.pageURL}: 解析成功`)
         resolveCache.set(key, { source, expiresAt: Date.now() + ONLINE_CACHE_TTL })
         return source
       } catch (error) {
@@ -333,8 +354,10 @@
         if (message === 'challenge') {
           challenged = true
           challengeURL = attempt.pageURL
+          trace(`${attempt.provider} ${attempt.pageURL}: Cloudflare 验证拦截`)
           continue
         }
+        trace(`${attempt.provider} ${attempt.pageURL}: ${message}`)
         errors.push(message)
       }
     }
@@ -406,5 +429,13 @@
     version: BRIDGE_VERSION,
     resolve: (code) => resolveOnlineStream(code),
     fetchResource: (url, responseType, headers) => fetchResource(url, responseType, headers),
+    debug: async (code) => {
+      try {
+        const source = await resolveOnlineStream(code)
+        return { source, trace: debugTrace }
+      } catch (error) {
+        return { error: String(error?.message || error || ''), trace: debugTrace }
+      }
+    },
   }
 })()
