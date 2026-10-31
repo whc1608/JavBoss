@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JavBoss 在线片源助手
 // @namespace    https://github.com/whc1608/JavBoss
-// @version      1.4.1
+// @version      1.4.2
 // @description  为 JavBoss 页面解析并播放在线片源，无需安装浏览器扩展
 // @updateURL    http://localhost:8655/javboss-online.user.js
 // @downloadURL  http://localhost:8655/javboss-online.user.js
@@ -38,7 +38,7 @@
   const TAB_RESPONSE_KEY = 'javbossOnlineTabResponse'
   const TAB_REQUEST_TTL = 5 * 60 * 1000
   const JL_CACHE_PREFIX = 'javbossJlRating:'
-  const JL_CACHE_TTL = 7 * 24 * 60 * 60 * 1000
+  const JL_CACHE_TTL = 30 * 24 * 60 * 60 * 1000
   const MISSING_PERMISSION =
     '在线片源脚本无法访问视频站点，请在 Tampermonkey 中允许该脚本连接 missav123.com 与 123av.com'
 
