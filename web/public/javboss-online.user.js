@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JavBoss 在线片源助手
 // @namespace    https://github.com/whc1608/JavBoss
-// @version      1.3.1
+// @version      1.3.2
 // @description  为 JavBoss 页面解析并播放在线片源，无需安装浏览器扩展
 // @updateURL    http://localhost:8655/javboss-online.user.js
 // @downloadURL  http://localhost:8655/javboss-online.user.js
@@ -142,11 +142,10 @@
   }
 
   function gmRequest(url, responseType, extraHeaders = {}) {
+    // Match the reference userscript's request options: it never sets
+    // anonymous/withCredentials and only sends an Accept header.
     const headers = {
-      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      ...(responseType === 'text' && !extraHeaders.Accept
-        ? { Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8' }
-        : {}),
+      Accept: responseType === 'text' ? 'text/html' : '*/*',
       ...extraHeaders,
     }
     return new Promise((resolve, reject) => {
@@ -155,10 +154,7 @@
         url,
         timeout: REQUEST_TIMEOUT,
         responseType,
-        anonymous: false,
-        withCredentials: true,
         headers,
-        referer: extraHeaders.Referer || undefined,
         onload: resolve,
         onerror: () => reject(new Error('Failed to fetch')),
         ontimeout: () => reject(new Error('请求超时')),
