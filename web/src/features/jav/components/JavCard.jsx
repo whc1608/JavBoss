@@ -889,10 +889,13 @@ export default function JavCard(props) {
                           window.open(javdbHref, '_blank', 'noopener,noreferrer')
                         }
                       }
-                      const coverSrc =
-                        hasItem || !row.cover_url
-                          ? `/jav/${encodeURIComponent(row.code)}/cover`
-                          : row.cover_url
+                      const externalCover = String(row.cover_url || '')
+                      const proxiedCover = externalCover
+                        ? `/javrelated/cover?url=${encodeURIComponent(externalCover)}`
+                        : ''
+                      const localCover = `/jav/${encodeURIComponent(row.code)}/cover`
+                      const coverSrc = hasItem ? localCover : proxiedCover || localCover
+                      const coverFallback = hasItem ? proxiedCover : localCover
                       return (
                         <div
                           key={row.id || row.code}
@@ -911,6 +914,13 @@ export default function JavCard(props) {
                               src={coverSrc}
                               alt={row.code}
                               loading="lazy"
+                              referrerPolicy="no-referrer"
+                              onError={(event) => {
+                                const image = event.currentTarget
+                                if (image.dataset.coverFallback === '1' || !coverFallback) return
+                                image.dataset.coverFallback = '1'
+                                image.src = coverFallback
+                              }}
                               className="h-[62px] w-[44px] shrink-0 rounded object-cover object-top"
                             />
                           ) : (

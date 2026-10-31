@@ -167,6 +167,7 @@ type javDBAPIMovie struct {
 	Duration    javDBAPIValue `json:"duration"`
 	Score       javDBAPIValue `json:"score"`
 	CoverURL    string        `json:"cover_url"`
+	ThumbURL    string        `json:"thumb_url"`
 	Type        javDBAPIValue `json:"type"`
 	Tags        []struct {
 		Name string `json:"name"`
@@ -335,6 +336,17 @@ func (p *JavDBAPIClient) RelatedMoviesByCode(ctx context.Context, code string, l
 	if len(relatives) > limit {
 		relatives = relatives[:limit]
 	}
+	// Related details are independent; use a dedicated limiter with a small
+	// concurrency window so the whole list resolves in about two seconds.
+	detailClient := &JavDBAPIClient{
+		httpClient: p.httpClient,
+		baseURL:    p.baseURL,
+		limiter:    ratelimit.New(120 * time.Millisecond),
+	}
+	detailClient.init()
+	sem := make(chan struct{}, 4)
+	var wait sync.WaitGroup
+	var mu sync.Mutex
 	out := make([]metadata.RelatedMovie, 0, len(relatives))
 	for _, entry := range relatives {
 		if ctx.Err() != nil {
@@ -344,46 +356,64 @@ func (p *JavDBAPIClient) RelatedMoviesByCode(ctx context.Context, code string, l
 		if id == "" {
 			continue
 		}
-		ctxDetail, cancel := context.WithTimeout(ctx, 8*time.Second)
-		var data json.RawMessage
-		err := p.get(ctxDetail, "/api/v4/movies/"+url.PathEscape(id), nil, &data)
-		cancel()
-		if err != nil {
-			logging.Info("javdb-api related detail failed: id=%s err=%v", id, err)
-			continue
-		}
-		var nested struct {
-			Movie json.RawMessage `json:"movie"`
-		}
-		_ = json.Unmarshal(data, &nested)
-		body := data
-		if len(nested.Movie) != 0 {
-			body = nested.Movie
-		}
-		var detail javDBAPIMovie
-		if err := json.Unmarshal(body, &detail); err != nil {
-			continue
-		}
-		number := strings.TrimSpace(detail.Number)
-		if number == "" {
-			number = strings.TrimSpace(entry.Number)
-		}
-		if number == "" {
-			continue
-		}
-		var score float64
-		if parsed, err := strconv.ParseFloat(strings.TrimSpace(string(detail.Score)), 64); err == nil && parsed >= 0 && parsed <= 5 {
-			score = parsed
-		}
-		out = append(out, metadata.RelatedMovie{
-			ID:       id,
-			Code:     number,
-			Title:    detail.metadataTitle(),
-			ZhTitle:  strings.TrimSpace(detail.ZhTitle),
-			Rating:   score,
-			CoverURL: parseutil.ResolveSampleImageURL(p.baseURL, detail.CoverURL),
-		})
+		fallbackNumber := strings.TrimSpace(entry.Number)
+		wait.Add(1)
+		go func(relatedID, fallbackCode string) {
+			defer wait.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+			ctxDetail, cancel := context.WithTimeout(ctx, 8*time.Second)
+			var data json.RawMessage
+			err := detailClient.get(ctxDetail, "/api/v4/movies/"+url.PathEscape(relatedID), nil, &data)
+			cancel()
+			if err != nil {
+				logging.Info("javdb-api related detail failed: id=%s err=%v", relatedID, err)
+				return
+			}
+			var nested struct {
+				Movie json.RawMessage `json:"movie"`
+			}
+			_ = json.Unmarshal(data, &nested)
+			body := data
+			if len(nested.Movie) != 0 {
+				body = nested.Movie
+			}
+			var detail javDBAPIMovie
+			if err := json.Unmarshal(body, &detail); err != nil {
+				return
+			}
+			number := strings.TrimSpace(detail.Number)
+			if number == "" {
+				number = fallbackCode
+			}
+			if number == "" {
+				return
+			}
+			var score float64
+			if parsed, err := strconv.ParseFloat(strings.TrimSpace(string(detail.Score)), 64); err == nil && parsed >= 0 && parsed <= 5 {
+				score = parsed
+			}
+			thumb := parseutil.ResolveSampleImageURL(p.baseURL, detail.ThumbURL)
+			if thumb == "" {
+				thumb = parseutil.ResolveSampleImageURL(p.baseURL, detail.CoverURL)
+			}
+			mu.Lock()
+			out = append(out, metadata.RelatedMovie{
+				ID:       relatedID,
+				Code:     number,
+				Title:    detail.metadataTitle(),
+				ZhTitle:  strings.TrimSpace(detail.ZhTitle),
+				Rating:   score,
+				CoverURL: thumb,
+			})
+			mu.Unlock()
+		}(id, fallbackNumber)
 	}
+	wait.Wait()
 	sort.Slice(out, func(left, right int) bool {
 		if out[left].Rating != out[right].Rating {
 			return out[left].Rating > out[right].Rating

@@ -242,6 +242,58 @@ func getJavItem(c *gin.Context) {
 	c.JSON(http.StatusOK, item)
 }
 
+// getJavRelatedCover proxies JavDB recommendation thumbnails so they load
+// even when the upstream host is blocked by browser filters.
+func getJavRelatedCover(c *gin.Context) {
+	raw := strings.TrimSpace(c.Query("url"))
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		respondLocalizedError(c, http.StatusBadRequest, "封面地址无效", "Invalid cover URL")
+		return
+	}
+	if !strings.HasSuffix(strings.ToLower(parsed.Hostname()), ".spfcas.com") {
+		respondLocalizedError(c, http.StatusBadRequest, "封面地址无效", "Invalid cover URL")
+		return
+	}
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return http.ErrUseLastResponse
+			}
+			if !strings.HasSuffix(strings.ToLower(req.URL.Hostname()), ".spfcas.com") {
+				return errors.New("invalid redirect host")
+			}
+			return nil
+		},
+	}
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		respondLocalizedError(c, http.StatusBadGateway, "加载封面失败", "Failed to load cover")
+		return
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+	resp, err := client.Do(req)
+	if err != nil {
+		respondLocalizedError(c, http.StatusBadGateway, "加载封面失败", "Failed to load cover")
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respondLocalizedError(c, http.StatusBadGateway, "加载封面失败", "Failed to load cover")
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+	if err != nil || len(data) == 0 {
+		respondLocalizedError(c, http.StatusBadGateway, "加载封面失败", "Failed to load cover")
+		return
+	}
+	contentType := http.DetectContentType(data)
+	c.Header("Cache-Control", "public, max-age=86400")
+	c.Data(http.StatusOK, contentType, data)
+}
+
 func listSimilarJavs(c *gin.Context) {
 	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
 	if err != nil || id <= 0 {
