@@ -671,7 +671,7 @@ func assertVideoContentSchema(t *testing.T, db *gorm.DB) {
 		t.Fatalf("iterate video columns: %v", err)
 	}
 
-	wantColumns := []string{"id", "size", "fingerprint", "duration_sec", "play_count", "created_at", "updated_at", "jav_scrape_override", "cover_screenshot_name", "watched_ms"}
+	wantColumns := []string{"id", "size", "fingerprint", "duration_sec", "play_count", "created_at", "updated_at", "jav_scrape_override", "cover_screenshot_name", "watched_ms", "subtitle_settings", "media_info"}
 	if len(columns) != len(wantColumns) {
 		t.Fatalf("unexpected video columns: got %#v want %v", columns, wantColumns)
 	}
@@ -783,6 +783,7 @@ func assertModelIndexes(t *testing.T, db *gorm.DB) {
 	assertTableIndexes(t, db, "video_tag", nil)
 	assertTableIndexes(t, db, "jav_tag_map", []string{
 		"idx_jav_tag_map_provider",
+		"idx_jav_tag_map_tag_provider",
 	})
 	assertTableIndexes(t, db, "jav_idol_map", []string{
 		"idx_jav_idol_map_jav_idol_id_jav_id",
