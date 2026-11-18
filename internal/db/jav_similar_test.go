@@ -88,7 +88,7 @@ func TestListSimilarJavsScoresAndOrdersByRating(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list similar javs: %v", err)
 	}
-	wantCodes := []string{"SIM-003", "SIM-002", "SIM-008", "SIM-001", "SIM-006"}
+	wantCodes := []string{"SIM-003", "SIM-002", "SIM-008", "SIM-004", "SIM-005"}
 	if len(items) != len(wantCodes) {
 		t.Fatalf("similar count = %d, want %d (%#v)", len(items), len(wantCodes), items)
 	}

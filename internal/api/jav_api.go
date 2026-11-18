@@ -383,7 +383,16 @@ func listSimilarJavs(c *gin.Context) {
 		respondLocalizedError(c, http.StatusInternalServerError, "加载相似推荐失败", "Failed to load similar recommendations")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"items": items})
+	note := ""
+	if !includeLocal && len(items) < limit {
+		// The library usually holds few items without local files; widen the
+		// pool instead of returning the same handful for every movie.
+		if wider, widerErr := dbpkg.Default().ListSimilarJavs(c.Request.Context(), id, limit, true); widerErr == nil && len(wider) > len(items) {
+			items = wider
+			note = "外部推荐不可用且库存候选不足，已包含库内作品"
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items, "note": note})
 }
 
 type javSimilarFreshItem struct {
@@ -447,6 +456,12 @@ func respondSimilarLocal(c *gin.Context, id int64, includeLocal bool, note strin
 		logging.Error("list local similar jav id=%d: %v", id, err)
 		respondLocalizedError(c, http.StatusBadGateway, "暂时无法获取推荐", "Failed to load recommendations")
 		return
+	}
+	if !includeLocal && len(items) < 5 {
+		if wider, widerErr := dbpkg.Default().ListSimilarJavs(c.Request.Context(), id, 5, true); widerErr == nil && len(wider) > len(items) {
+			items = wider
+			note += "；库存候选不足，已包含库内作品"
+		}
 	}
 	if items == nil {
 		items = []dbpkg.JavSimilarItem{}

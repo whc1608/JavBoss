@@ -171,6 +171,7 @@ type JavSimilarItem struct {
 	ZhTitle        string  `json:"zh_title"`
 	Rating         float64 `json:"rating"`
 	FavoriteRating float64 `json:"favorite_rating"`
+	SeriesID       *int64  `json:"-"`
 }
 
 // JavCodeInfo summarizes a JAV row for external recommendations.
@@ -205,8 +206,9 @@ WHERE jav.code IN ?`, codes).Scan(&rows).Error
 }
 
 // ListSimilarJavs recommends items sharing idols, series, studio or tags.
-// Relation strength ranks first; provider rating breaks ties. When
-// includeLocal is false, items with local video files are excluded.
+// Rare tags weigh more than ubiquitous ones, relation strength ranks first and
+// provider rating breaks ties. When includeLocal is false, items with local
+// video files are excluded.
 func (store *Store) ListSimilarJavs(ctx context.Context, javID int64, limit int, includeLocal bool) ([]JavSimilarItem, error) {
 	if javID <= 0 {
 		return nil, errors.New("jav id must be positive")
@@ -257,7 +259,11 @@ func (store *Store) ListSimilarJavs(ctx context.Context, javID int64, limit int,
 		args = append(args, *source.StudioID)
 	}
 	if len(tagIDs) > 0 {
-		scoreParts = append(scoreParts, "(SELECT COUNT(DISTINCT jtm.jav_tag_id) FROM jav_tag_map jtm WHERE jtm.jav_id = j.id AND jtm.jav_tag_id IN ?)")
+		// Weight each shared tag by its rarity so ubiquitous tags such as
+		// "high definition" cannot dominate the score.
+		scoreParts = append(scoreParts, `(SELECT COALESCE(SUM(6.0 / (SELECT COUNT(*) FROM jav_tag_map d WHERE d.jav_tag_id = jtm.jav_tag_id)), 0)
+    FROM jav_tag_map jtm
+    WHERE jtm.jav_id = j.id AND jtm.jav_tag_id IN ?)`)
 		args = append(args, tagIDs)
 	}
 	if len(scoreParts) == 0 {
@@ -268,25 +274,100 @@ func (store *Store) ListSimilarJavs(ctx context.Context, javID int64, limit int,
 	if !includeLocal {
 		innerWhere += " AND NOT EXISTS (SELECT 1 FROM video_location vl WHERE vl.jav_id = j.id)"
 	}
-	query := `SELECT similar.id, similar.code, similar.title, similar.zh_title, similar.rating, similar.favorite_rating
+	// Fetch extra candidates so diversity filtering can still fill the limit.
+	candidateLimit := limit * 6
+	if candidateLimit < 30 {
+		candidateLimit = 30
+	}
+	query := `SELECT similar.id, similar.code, similar.title, similar.zh_title, similar.rating, similar.favorite_rating, similar.series_id
 FROM (
-  SELECT j.id, j.code, j.title, j.zh_title, j.rating, j.favorite_rating, (` + strings.Join(scoreParts, " + ") + `) AS score
+  SELECT j.id, j.code, j.title, j.zh_title, j.rating, j.favorite_rating, j.series_id, (` + strings.Join(scoreParts, " + ") + `) AS score
   FROM jav j
   ` + innerWhere + `
 ) AS similar
-WHERE similar.score > 0
+WHERE similar.score >= 0.5
 ORDER BY similar.score DESC, similar.rating DESC, similar.favorite_rating DESC, similar.id DESC
 LIMIT ?`
-	args = append(args, javID, limit)
+	args = append(args, javID, candidateLimit)
 
-	var items []JavSimilarItem
-	if err := store.conn.WithContext(ctx).Raw(query, args...).Scan(&items).Error; err != nil {
+	var candidates []JavSimilarItem
+	if err := store.conn.WithContext(ctx).Raw(query, args...).Scan(&candidates).Error; err != nil {
 		return nil, fmt.Errorf("list similar javs: %w", err)
 	}
-	if items == nil {
-		items = []JavSimilarItem{}
+	return store.diversifySimilarJavs(ctx, javID, candidates, limit), nil
+}
+
+// diversifySimilarJavs caps how many picks may share a series or an idol so a
+// single franchise cannot fill every slot. Caps are relaxed only when the
+// candidate pool is too small.
+func (store *Store) diversifySimilarJavs(ctx context.Context, javID int64, candidates []JavSimilarItem, limit int) []JavSimilarItem {
+	items := make([]JavSimilarItem, 0, limit)
+	if len(candidates) == 0 {
+		return items
 	}
-	return items, nil
+	ids := make([]int64, 0, len(candidates))
+	for _, item := range candidates {
+		ids = append(ids, item.ID)
+	}
+	type idolKey struct {
+		javID  int64
+		idolID int64
+	}
+	var pairs []idolKey
+	if err := store.conn.WithContext(ctx).
+		Table("jav_idol_map").
+		Select("jav_id, jav_idol_id").
+		Where("jav_id IN ?", ids).
+		Scan(&pairs).Error; err != nil {
+		// Idol data is optional for diversity; fall back to series only.
+		pairs = nil
+	}
+	primaryIdol := make(map[int64]int64, len(ids))
+	for _, pair := range pairs {
+		if _, ok := primaryIdol[pair.javID]; !ok {
+			primaryIdol[pair.javID] = pair.idolID
+		}
+	}
+
+	seriesCount := map[int64]int{}
+	idolCount := map[int64]int{}
+	pick := func(capSeries, capIdol int) {
+		for _, item := range candidates {
+			if len(items) >= limit {
+				return
+			}
+			if picked(items, item.ID) {
+				continue
+			}
+			if item.SeriesID != nil && capSeries > 0 && seriesCount[*item.SeriesID] >= capSeries {
+				continue
+			}
+			if idol, ok := primaryIdol[item.ID]; ok && capIdol > 0 && idolCount[idol] >= capIdol {
+				continue
+			}
+			items = append(items, item)
+			if item.SeriesID != nil {
+				seriesCount[*item.SeriesID]++
+			}
+			if idol, ok := primaryIdol[item.ID]; ok {
+				idolCount[idol]++
+			}
+		}
+	}
+	pick(2, 3)
+	if len(items) < limit {
+		pick(0, 0)
+	}
+	return items
+}
+
+func picked(items []JavSimilarItem, id int64) bool {
+	for _, item := range items {
+		if item.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // SearchJav lists Jav metadata filtered by idol IDs/tag IDs/search with pagination and sorting.
