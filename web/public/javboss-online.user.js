@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JavBoss 在线片源助手
 // @namespace    https://github.com/whc1608/JavBoss
-// @version      1.4.2
+// @version      1.5.0
 // @description  为 JavBoss 页面解析并播放在线片源，无需安装浏览器扩展
 // @updateURL    http://localhost:8655/javboss-online.user.js
 // @downloadURL  http://localhost:8655/javboss-online.user.js
@@ -12,6 +12,8 @@
 // @match        https://missav123.com/*
 // @match        https://www.missav123.com/*
 // @match        https://123av.com/*
+// @match        https://jable.tv/*
+// @match        https://www.jable.tv/*
 // @match        https://www.javlibrary.com/*
 // @match        https://javlibrary.com/*
 // @connect      missav123.com
@@ -38,6 +40,8 @@
   const TAB_RESPONSE_KEY = 'javbossOnlineTabResponse'
   const TAB_REQUEST_TTL = 5 * 60 * 1000
   const JL_CACHE_PREFIX = 'javbossJlRating:'
+  const RELATED_CACHE_PREFIX = 'javbossRelated:'
+  const RELATED_CACHE_TTL = 30 * 24 * 60 * 60 * 1000
   const JL_CACHE_TTL = 30 * 24 * 60 * 60 * 1000
   const MISSING_PERMISSION =
     '在线片源脚本无法访问视频站点，请在 Tampermonkey 中允许该脚本连接 missav123.com 与 123av.com'
@@ -543,6 +547,10 @@
     return /javlibrary\.com$/i.test(location.hostname)
   }
 
+  function isJableHost() {
+    return /jable\.tv$/i.test(location.hostname)
+  }
+
   function normalizeRating(value) {
     const score = Number(value)
     if (!Number.isFinite(score) || score <= 0) return null
@@ -642,6 +650,87 @@
     return Promise.resolve(ratings)
   }
 
+  // Cache "related videos" while the user browses supported sites so JavBoss
+  // can show external recommendations without scraping from the server.
+  function relatedCodeFromHref(href) {
+    let path = ''
+    try {
+      path = new URL(href, location.href).pathname
+    } catch {
+      return ''
+    }
+    const match = path.match(/([a-z0-9]+(?:-[a-z0-9]+){1,3})\/?$/i)
+    if (!match) return ''
+    const code = match[1]
+      .toLowerCase()
+      .replace(/-chinese-subtitle$/i, '')
+      .replace(/-english-subtitle$/i, '')
+      .replace(/-uncensored-leaked$/i, '')
+      .replace(/-leaked$/i, '')
+    return /^[a-z0-9]+-\d+/.test(code) ? code : ''
+  }
+
+  function collectRelatedVideos(currentCode) {
+    const seen = new Map()
+    for (const anchor of document.querySelectorAll('a[href]')) {
+      const code = relatedCodeFromHref(anchor.getAttribute('href'))
+      if (!code || code === currentCode || seen.has(code)) continue
+      const image = anchor.querySelector('img')
+      const title = String(
+        anchor.getAttribute('title') || image?.getAttribute('alt') || anchor.textContent || ''
+      )
+        .trim()
+        .replace(/\s+/g, ' ')
+        .slice(0, 200)
+      const rawCover = String(image?.getAttribute('data-src') || image?.getAttribute('src') || '')
+      seen.set(code, {
+        code,
+        title,
+        cover: /^https?:/i.test(rawCover) ? rawCover : '',
+      })
+      if (seen.size >= 12) break
+    }
+    return [...seen.values()]
+  }
+
+  function storeRelatedVideos(code, items) {
+    if (typeof GM_setValue !== 'function') return
+    try {
+      GM_setValue(RELATED_CACHE_PREFIX + code, { items, at: Date.now() })
+    } catch {
+      // ignore cache write failures
+    }
+  }
+
+  function resolveRelatedVideos(rawCode) {
+    const code = normalizeCode(rawCode)
+    if (!code || typeof GM_getValue !== 'function') return Promise.resolve([])
+    try {
+      const entry = GM_getValue(RELATED_CACHE_PREFIX + code, null)
+      if (!entry || Date.now() - Number(entry.at || 0) > RELATED_CACHE_TTL) {
+        return Promise.resolve([])
+      }
+      return Promise.resolve(Array.isArray(entry.items) ? entry.items : [])
+    } catch {
+      return Promise.resolve([])
+    }
+  }
+
+  function recordRelatedVideos() {
+    const run = () =>
+      window.setTimeout(() => {
+        const code = relatedCodeFromHref(location.href)
+        if (!code) return
+        const items = collectRelatedVideos(code)
+        if (items.length >= 2) storeRelatedVideos(code, items)
+      }, 1200)
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', run, { once: true })
+    } else {
+      run()
+    }
+  }
+
   function resolveViaTab(code) {
     const slug = normalizeCode(code)
     if (!slug) return Promise.resolve(null)
@@ -724,15 +813,20 @@
   if (isProviderHost()) {
     // Provider tabs only answer pending extraction requests from JavBoss.
     handleProviderTabRequest().catch(() => {})
+    recordRelatedVideos()
   } else if (isJavLibraryHost()) {
     // JavLibrary tabs cache ratings as the user browses them.
     recordJavLibraryRating()
+  } else if (isJableHost()) {
+    // Jable tabs cache related videos for external recommendations.
+    recordRelatedVideos()
   } else {
     pageWindow.__JAVBOSS_ONLINE_BRIDGE__ = {
       version: BRIDGE_VERSION,
       resolve: (code) => resolveOnlineStream(code),
       fetchResource: (url, responseType, headers) => fetchResource(url, responseType, headers),
       fetchJavLibraryRatings: (codes) => resolveJavLibraryRatings(codes),
+      fetchRelatedVideos: (code) => resolveRelatedVideos(code),
       debug: async (code) => {
         try {
           const source = await resolveOnlineStream(code)

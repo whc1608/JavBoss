@@ -110,6 +110,38 @@ export default function JavCard(props) {
       })
       .catch(() => {})
   }
+  const mergeExternalVideos = (items, requestSeq) => {
+    const bridge = typeof window === 'undefined' ? null : window.__JAVBOSS_ONLINE_BRIDGE__
+    const code = normalizeRatingCode(props.item?.code)
+    if (!code || typeof bridge?.fetchRelatedVideos !== 'function') return
+    bridge
+      .fetchRelatedVideos(code)
+      .then((rows) => {
+        if (similarRequestRef.current !== requestSeq) return
+        if (!Array.isArray(rows) || !rows.length) return
+        const known = new Set(items.map((row) => normalizeRatingCode(row?.code)))
+        const extra = []
+        for (const row of rows) {
+          const rowCode = normalizeRatingCode(row?.code)
+          if (!rowCode || known.has(rowCode)) continue
+          known.add(rowCode)
+          extra.push({
+            id: 0,
+            code: rowCode.toUpperCase(),
+            title: row.title || '',
+            zh_title: '',
+            rating: 0,
+            favorite_rating: 0,
+            cover_url: row.cover || '',
+            external: true,
+          })
+          if (extra.length >= 3) break
+        }
+        if (!extra.length) return
+        setSimilarItems([...items, ...extra])
+      })
+      .catch(() => {})
+  }
   const loadSimilar = async (includeLocal, { refresh = false } = {}) => {
     const javID = Number(props.item?.id)
     if (!Number.isFinite(javID) || javID <= 0) return
@@ -124,6 +156,7 @@ export default function JavCard(props) {
         setSimilarStale(cached.stale)
         setSimilarNote(cached.note || '')
         mergeJlRatings(cached.items, requestSeq)
+        mergeExternalVideos(cached.items, requestSeq)
         return
       }
     }
@@ -162,6 +195,7 @@ export default function JavCard(props) {
       setSimilarNote(note)
       similarCacheRef.current.set(cacheKey, { items, stale, note })
       mergeJlRatings(items, requestSeq)
+      mergeExternalVideos(items, requestSeq)
     } catch (error) {
       if (similarRequestRef.current !== requestSeq) return
       setSimilarItems([])
@@ -902,13 +936,15 @@ export default function JavCard(props) {
                           ? Number(row.rating)
                           : 0
                       const hasItem = Number(row.id) > 0
+                      const isExternal = Boolean(row.external)
                       const externalCover = String(row.cover_url || '')
-                      const proxiedCover = externalCover
-                        ? `/javrelated/cover?url=${encodeURIComponent(externalCover)}`
-                        : ''
+                      const proxiedCover =
+                        externalCover && !isExternal
+                          ? `/javrelated/cover?url=${encodeURIComponent(externalCover)}`
+                          : ''
                       const localCover = `/jav/${encodeURIComponent(row.code)}/cover`
-                      const coverSrc = proxiedCover || localCover
-                      const coverFallback = localCover
+                      const coverSrc = isExternal ? externalCover : proxiedCover || localCover
+                      const coverFallback = isExternal ? '' : localCover
                       const openSimilarRow = async () => {
                         setSimilarAnchorEl(null)
                         if (hasItem) {
@@ -954,7 +990,7 @@ export default function JavCard(props) {
                             openSimilarRow()
                           }}
                         >
-                          {row.code ? (
+                          {row.code && coverSrc ? (
                             <img
                               src={coverSrc}
                               alt={row.code}
