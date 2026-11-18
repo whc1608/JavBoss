@@ -140,7 +140,7 @@ func TestSupportedProviders(t *testing.T) {
 		want   []string
 	}{
 		{"LookupActressByCode", []string{"javdatabase"}},
-		{"LookupActressByJapaneseName", []string{"javmodel", "minnanoav", "avwiki"}},
+		{"LookupActressByJapaneseName", []string{"javdb", "javmodel", "minnanoav", "avwiki"}},
 		{"LookupJavByCode", []string{"javbus", "javdatabase", "javdb", "javdb-api", "avmoo", "avsox", "javmenu", "theporndb"}},
 	} {
 		t.Run(tc.method, func(t *testing.T) {

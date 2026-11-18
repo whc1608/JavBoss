@@ -160,7 +160,7 @@ func finishInteractiveProcess(t *testing.T, child *exec.Cmd, done <-chan error, 
 func TestInteractiveFormSelectsMethodThenProviderAndEditsInput(t *testing.T) {
 	for _, tc := range []struct{ name, methodKeys, method, providerKeys, provider, keys, want string }{
 		{"actress by code", "\r", "LookupActressByCode", "\r", "javdatabase", "AC\x1b[DB\x1b[CD\r", "ABCD"},
-		{"actress by name", "\x1b[B\r", "LookupActressByJapaneseName", "\x1b[B\r", "minnanoav", "女优\x1b[D名\r", "女名优"},
+		{"actress by name", "\x1b[B\r", "LookupActressByJapaneseName", "\x1b[B\x1b[B\r", "minnanoav", "女优\x1b[D名\r", "女名优"},
 		{"movie", "\x1b[B\x1b[B\r", "LookupJavByCode", "\r", "javbus", "ABC-001\r", "ABC-001"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
