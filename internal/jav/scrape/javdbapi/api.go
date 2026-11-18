@@ -73,8 +73,41 @@ func (p *JavDBAPIClient) init() {
 	})
 }
 
+// The app API started rejecting every request with JWTVerificationError and
+// now requires a logged-in account. Stop calling it for a while instead of
+// hammering the API (which risks account bans) from background enrichment.
+var (
+	javdbAPIAuthMu        sync.Mutex
+	javdbAPIAuthBlockedAt time.Time
+)
+
+const javdbAPIAuthCooldown = 30 * time.Minute
+
+func javdbAPIAuthCoolingDown() bool {
+	javdbAPIAuthMu.Lock()
+	defer javdbAPIAuthMu.Unlock()
+	return time.Now().Before(javdbAPIAuthBlockedAt)
+}
+
+func blockJavdbAPIAuth(action string) {
+	lower := strings.ToLower(action)
+	if !strings.Contains(lower, "jwt") && !strings.Contains(lower, "login") {
+		return
+	}
+	javdbAPIAuthMu.Lock()
+	alreadyBlocked := time.Now().Before(javdbAPIAuthBlockedAt)
+	javdbAPIAuthBlockedAt = time.Now().Add(javdbAPIAuthCooldown)
+	javdbAPIAuthMu.Unlock()
+	if !alreadyBlocked {
+		logging.Info("javdb-api requires login (%s); pausing requests for %s", action, javdbAPIAuthCooldown)
+	}
+}
+
 func (p *JavDBAPIClient) get(ctx context.Context, path string, params url.Values, dest any) (err error) {
 	p.init()
+	if javdbAPIAuthCoolingDown() {
+		return fmt.Errorf("javdb-api: request rejected (JWTVerificationError)")
+	}
 	started := time.Now()
 	status, responseBytes := 0, 0
 	logging.Info("javdb-api request: url=%s%s code=%q", p.baseURL, path, params.Get("q"))
@@ -122,6 +155,7 @@ func (p *JavDBAPIClient) get(ctx context.Context, path string, params url.Values
 	}
 	success := strings.Trim(string(envelope.Success), "\"")
 	if success != "1" && !strings.EqualFold(success, "true") {
+		blockJavdbAPIAuth(envelope.Action)
 		return fmt.Errorf("javdb-api: request rejected (%s)", envelope.Action)
 	}
 	if len(envelope.Data) == 0 || string(envelope.Data) == "null" {
