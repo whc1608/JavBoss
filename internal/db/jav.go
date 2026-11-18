@@ -309,23 +309,18 @@ func (store *Store) diversifySimilarJavs(ctx context.Context, javID int64, candi
 	for _, item := range candidates {
 		ids = append(ids, item.ID)
 	}
-	type idolKey struct {
-		javID  int64
-		idolID int64
-	}
-	var pairs []idolKey
+	var pairs []models.JavIdolMap
 	if err := store.conn.WithContext(ctx).
-		Table("jav_idol_map").
-		Select("jav_id, jav_idol_id").
+		Select("jav_id", "jav_idol_id").
 		Where("jav_id IN ?", ids).
-		Scan(&pairs).Error; err != nil {
+		Find(&pairs).Error; err != nil {
 		// Idol data is optional for diversity; fall back to series only.
 		pairs = nil
 	}
 	primaryIdol := make(map[int64]int64, len(ids))
 	for _, pair := range pairs {
-		if _, ok := primaryIdol[pair.javID]; !ok {
-			primaryIdol[pair.javID] = pair.idolID
+		if _, ok := primaryIdol[pair.JavID]; !ok {
+			primaryIdol[pair.JavID] = pair.JavIdolID
 		}
 	}
 

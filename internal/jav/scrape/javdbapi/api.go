@@ -41,11 +41,12 @@ func javDBAPIQueryCode(code string) string {
 
 // JavDBAPIClient owns its device identity, request limiter and proxy-aware transport.
 type JavDBAPIClient struct {
-	limiter    *ratelimit.Limiter
-	once       sync.Once
-	httpClient *http.Client
-	baseURL    string
-	deviceID   string
+	limiter             *ratelimit.Limiter
+	once                sync.Once
+	httpClient          *http.Client
+	baseURL             string
+	deviceID            string
+	enforceAuthCooldown bool
 }
 
 func javDBAPISignature(ts int64) string {
@@ -105,7 +106,7 @@ func blockJavdbAPIAuth(action string) {
 
 func (p *JavDBAPIClient) get(ctx context.Context, path string, params url.Values, dest any) (err error) {
 	p.init()
-	if javdbAPIAuthCoolingDown() {
+	if p.enforceAuthCooldown && javdbAPIAuthCoolingDown() {
 		return fmt.Errorf("javdb-api: request rejected (JWTVerificationError)")
 	}
 	started := time.Now()
@@ -155,7 +156,9 @@ func (p *JavDBAPIClient) get(ctx context.Context, path string, params url.Values
 	}
 	success := strings.Trim(string(envelope.Success), "\"")
 	if success != "1" && !strings.EqualFold(success, "true") {
-		blockJavdbAPIAuth(envelope.Action)
+		if p.enforceAuthCooldown {
+			blockJavdbAPIAuth(envelope.Action)
+		}
 		return fmt.Errorf("javdb-api: request rejected (%s)", envelope.Action)
 	}
 	if len(envelope.Data) == 0 || string(envelope.Data) == "null" {
@@ -500,9 +503,14 @@ func javDBAPIEntityURL(kind string, id javDBAPIValue) (string, error) {
 }
 
 // New creates an app API provider using the supplied non-nil HTTP client.
-// An empty baseURL selects the production API origin.
+// An empty baseURL selects the production API origin; only that client pauses
+// after auth rejections so tests against a local server keep their behavior.
 func New(httpClient *http.Client, baseURL string) *JavDBAPIClient {
-	return &JavDBAPIClient{httpClient: httpClient, baseURL: baseURL}
+	return &JavDBAPIClient{
+		httpClient:          httpClient,
+		baseURL:             baseURL,
+		enforceAuthCooldown: strings.TrimSpace(baseURL) == "",
+	}
 }
 
 // request uses this client's API identity, signing, rate limiter and transport.
