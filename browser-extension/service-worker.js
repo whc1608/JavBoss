@@ -66,6 +66,37 @@ function validSessionID(value) {
   return /^[a-zA-Z0-9_-]{8,128}$/.test(sessionId) ? sessionId : "";
 }
 
+const VERIFIED_ORIGIN_TTL = 10 * 60 * 1000;
+const verifiedJavBossOrigins = new Map();
+
+// Reverse proxies use arbitrary hostnames, so the bridge cannot rely on a
+// localhost/IP allowlist. Confirm the origin really serves JavBoss instead.
+async function verifyJavBossOrigin(message) {
+  let parsed;
+  try {
+    parsed = new URL(String(message?.origin || ""));
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+    return false;
+  const cached = verifiedJavBossOrigins.get(parsed.origin);
+  if (cached && Date.now() - cached.at < VERIFIED_ORIGIN_TTL) return cached.ok;
+  let ok = false;
+  try {
+    const response = await fetch(`${parsed.origin}/healthz`, {
+      method: "GET",
+      credentials: "omit",
+      cache: "no-store",
+    });
+    ok = response.ok && response.headers.get("x-javboss") === "1";
+  } catch {
+    ok = false;
+  }
+  verifiedJavBossOrigins.set(parsed.origin, { ok, at: Date.now() });
+  return ok;
+}
+
 function validMagnetURL(value) {
   const candidate = String(value || "").trim();
   if (!candidate || candidate.length > 16384) return "";
@@ -545,6 +576,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     operation = submitMagnetDownload(message);
   } else if (message?.type === "JAVBOSS_JAV_OWNERSHIP") {
     operation = lookupJavOwnership(message, sender);
+  } else if (message?.type === "JAVBOSS_VERIFY_ORIGIN") {
+    operation = verifyJavBossOrigin(message).then((trusted) => ({ trusted }));
   } else {
     return false;
   }

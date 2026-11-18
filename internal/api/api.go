@@ -220,5 +220,6 @@ func registerJavFavoriteRoutes(router gin.IRoutes, routeEntity string, dbEntity 
 }
 
 func handleHealth(c *gin.Context) {
+	c.Header("X-JavBoss", "1")
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }

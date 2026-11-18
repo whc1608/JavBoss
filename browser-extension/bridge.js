@@ -66,6 +66,26 @@
     );
   }
 
+  // Allow origins that are not on the local allowlist (for example a reverse
+  // proxy domain) after the service worker confirms they serve JavBoss.
+  let originCheck = null;
+
+  function verifyJavBossOrigin(origin) {
+    if (originCheck?.origin === origin) return originCheck.promise;
+    const promise = new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage(
+          { type: "JAVBOSS_VERIFY_ORIGIN", origin },
+          (response) => resolve(Boolean(response?.trusted)),
+        );
+      } catch {
+        resolve(false);
+      }
+    });
+    originCheck = { origin, promise };
+    return promise;
+  }
+
   function normalizeCode(value) {
     return String(value || "")
       .trim()
@@ -309,10 +329,19 @@
     const message = event.data;
     if (message?.type === "JAVBOSS_EXTENSION_CONNECT") {
       const requestedSessionId = validSessionID(message.sessionId);
-      if (!requestedSessionId || !trustedJavBossOrigin(event.origin)) return;
-      parentOrigin = event.origin;
-      sessionId = requestedSessionId;
-      postToParent({ type: "JAVBOSS_EXTENSION_READY" });
+      if (!requestedSessionId) return;
+      const accept = () => {
+        parentOrigin = event.origin;
+        sessionId = requestedSessionId;
+        postToParent({ type: "JAVBOSS_EXTENSION_READY" });
+      };
+      if (trustedJavBossOrigin(event.origin)) {
+        accept();
+        return;
+      }
+      verifyJavBossOrigin(event.origin).then((trusted) => {
+        if (trusted && !parentOrigin) accept();
+      });
       return;
     }
     if (

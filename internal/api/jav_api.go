@@ -408,7 +408,58 @@ var (
 	javSimilarFreshMu    sync.Mutex
 	javSimilarFreshToday = make(map[int64]javSimilarFreshEntry)
 	javSimilarFreshLast  = make(map[int64]javSimilarFreshEntry)
+
+	// JavDB's app API now requires a logged-in account and rejects every
+	// request with JWTVerificationError. Stop calling it for a while so we do
+	// not get rate limited or banned, and fall back to local data instead.
+	javdbRelatedBlockMu    sync.Mutex
+	javdbRelatedBlockUntil time.Time
 )
+
+const javdbRelatedBlockDuration = 30 * time.Minute
+
+func javdbRelatedBlocked() bool {
+	javdbRelatedBlockMu.Lock()
+	defer javdbRelatedBlockMu.Unlock()
+	return time.Now().Before(javdbRelatedBlockUntil)
+}
+
+func markJavdbRelatedBlocked(err error) {
+	if err == nil {
+		return
+	}
+	message := strings.ToLower(err.Error())
+	if !strings.Contains(message, "jwtverificationerror") &&
+		!strings.Contains(message, "request rejected") {
+		return
+	}
+	javdbRelatedBlockMu.Lock()
+	javdbRelatedBlockUntil = time.Now().Add(javdbRelatedBlockDuration)
+	javdbRelatedBlockMu.Unlock()
+	logging.Info("javdb-api unavailable, similar recommendations fall back to local data for %s", javdbRelatedBlockDuration)
+}
+
+// respondSimilarLocal serves library-based recommendations when JavDB cannot
+// provide related works.
+func respondSimilarLocal(c *gin.Context, id int64, includeLocal bool, note string) {
+	items, err := dbpkg.Default().ListSimilarJavs(c.Request.Context(), id, 5, includeLocal)
+	if err != nil {
+		logging.Error("list local similar jav id=%d: %v", id, err)
+		respondLocalizedError(c, http.StatusBadGateway, "暂时无法获取推荐", "Failed to load recommendations")
+		return
+	}
+	if items == nil {
+		items = []dbpkg.JavSimilarItem{}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"items":    items,
+		"stale":    true,
+		"cached":   false,
+		"degraded": true,
+		"day":      time.Now().Format("2006-01-02"),
+		"note":     note,
+	})
+}
 
 func listSimilarJavsFresh(c *gin.Context) {
 	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
@@ -450,9 +501,21 @@ func listSimilarJavsFresh(c *gin.Context) {
 		respondJavSimilarFresh(c, todayEntry, includeLocal, false, true, "")
 		return
 	}
+	if javdbRelatedBlocked() {
+		if hasToday {
+			respondJavSimilarFresh(c, todayEntry, includeLocal, true, true, "JavDB 暂不可用，显示当天缓存")
+			return
+		}
+		if hasLast {
+			respondJavSimilarFresh(c, lastEntry, includeLocal, true, true, "JavDB 暂不可用，显示上次缓存")
+			return
+		}
+		respondSimilarLocal(c, id, includeLocal, "JavDB 暂不可用，已改用本地推荐")
+		return
+	}
 
 	fetchCtx, cancel := context.WithTimeout(c.Request.Context(), 12*time.Second)
-	related, err := scrape.LookupJavDBRelatedMovies(fetchCtx, source.Code, 12)
+	related, err := scrape.LookupJavDBRelatedMovies(fetchCtx, source.Code, 8)
 	cancel()
 	if err == nil && len(related) > 0 {
 		entry := javSimilarFreshEntry{
@@ -472,6 +535,7 @@ func listSimilarJavsFresh(c *gin.Context) {
 
 	if err != nil {
 		logging.Error("fetch javdb related movies code=%s: %v", source.Code, err)
+		markJavdbRelatedBlocked(err)
 	}
 	if hasToday {
 		respondJavSimilarFresh(c, todayEntry, includeLocal, false, true, "刷新失败，显示当天缓存")
@@ -481,7 +545,7 @@ func listSimilarJavsFresh(c *gin.Context) {
 		respondJavSimilarFresh(c, lastEntry, includeLocal, true, true, "获取失败，显示上次缓存")
 		return
 	}
-	respondLocalizedError(c, http.StatusBadGateway, "暂时无法从 JavDB 获取推荐", "Failed to load recommendations from JavDB")
+	respondSimilarLocal(c, id, includeLocal, "JavDB 暂时无法获取推荐，已改用本地推荐")
 }
 
 func mapJavSimilarFresh(ctx context.Context, related []scrape.RelatedMovie) []javSimilarFreshItem {

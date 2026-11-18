@@ -77,6 +77,7 @@ export default function JavCard(props) {
   const [similarItems, setSimilarItems] = useState(null)
   const [similarJlRatings, setSimilarJlRatings] = useState({})
   const [similarStale, setSimilarStale] = useState(false)
+  const [similarNote, setSimilarNote] = useState('')
   const [similarIncludeLocal] = useSimilarIncludeLocal()
   const [similarLoading, setSimilarLoading] = useState(false)
   const [similarError, setSimilarError] = useState('')
@@ -121,6 +122,7 @@ export default function JavCard(props) {
         setSimilarLoading(false)
         setSimilarItems(cached.items)
         setSimilarStale(cached.stale)
+        setSimilarNote(cached.note || '')
         mergeJlRatings(cached.items, requestSeq)
         return
       }
@@ -128,9 +130,11 @@ export default function JavCard(props) {
     const requestSeq = (similarRequestRef.current += 1)
     setSimilarLoading(true)
     setSimilarError('')
+    setSimilarNote('')
     setSimilarJlRatings({})
     let items = []
     let stale = false
+    let note = ''
     const controller = typeof AbortController === 'function' ? new AbortController() : null
     const timer = controller ? window.setTimeout(() => controller.abort(), 16000) : null
     try {
@@ -142,15 +146,18 @@ export default function JavCard(props) {
         })
         items = Array.isArray(data?.items) ? data.items : []
         stale = Boolean(data?.stale) || Boolean(data?.error)
+        note = String(data?.note || '')
       } catch {
         const data = await fetchJavSimilar(javID, { includeLocal })
         items = Array.isArray(data?.items) ? data.items : []
         stale = true
+        note = zh('线上推荐暂不可用，已显示本地推荐', 'Online recommendations unavailable, showing local picks')
       }
       if (similarRequestRef.current !== requestSeq) return
       setSimilarItems(items)
       setSimilarStale(stale)
-      similarCacheRef.current.set(cacheKey, { items, stale })
+      setSimilarNote(note)
+      similarCacheRef.current.set(cacheKey, { items, stale, note })
       mergeJlRatings(items, requestSeq)
     } catch (error) {
       if (similarRequestRef.current !== requestSeq) return
@@ -863,6 +870,9 @@ export default function JavCard(props) {
                     <span>{zh('按评分排序', 'Sorted by rating')}</span>
                   </span>
                 </div>
+                {similarNote ? (
+                  <div className="mb-1 px-1 text-[11px] leading-4 text-amber-600">{similarNote}</div>
+                ) : null}
                 {similarLoading ? (
                   <div className="px-1 py-3 text-center text-xs text-gray-500">
                     {zh('正在从 JavDB 拉取推荐…', 'Loading recommendations from JavDB…')}
