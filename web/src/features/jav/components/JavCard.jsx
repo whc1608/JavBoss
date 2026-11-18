@@ -151,7 +151,10 @@ export default function JavCard(props) {
         const data = await fetchJavSimilar(javID, { includeLocal })
         items = Array.isArray(data?.items) ? data.items : []
         stale = true
-        note = zh('线上推荐暂不可用，已显示本地推荐', 'Online recommendations unavailable, showing local picks')
+        note = zh(
+          '线上推荐暂不可用，已显示本地推荐',
+          'Online recommendations unavailable, showing local picks'
+        )
       }
       if (similarRequestRef.current !== requestSeq) return
       setSimilarItems(items)
@@ -871,7 +874,9 @@ export default function JavCard(props) {
                   </span>
                 </div>
                 {similarNote ? (
-                  <div className="mb-1 px-1 text-[11px] leading-4 text-amber-600">{similarNote}</div>
+                  <div className="mb-1 px-1 text-[11px] leading-4 text-amber-600">
+                    {similarNote}
+                  </div>
                 ) : null}
                 {similarLoading ? (
                   <div className="px-1 py-3 text-center text-xs text-gray-500">
