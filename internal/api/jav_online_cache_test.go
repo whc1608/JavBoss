@@ -58,7 +58,7 @@ func TestLookupOnlineRelatedReturnsCachedEntry(t *testing.T) {
 		"site": "MissAV"
 	}`)
 
-	entry, ok := lookupOnlineRelated("ABC-123")
+	entry, ok := lookupOnlineRelated("ABC-123", false)
 	if !ok {
 		t.Fatal("expected cached entry for ABC-123")
 	}
@@ -77,10 +77,10 @@ func TestLookupOnlineRelatedIgnoresEmptyAndMissingEntries(t *testing.T) {
 	dir := useJavOnlineRelatedDir(t)
 	writeJavOnlineRelatedCache(t, dir, `{"entries":{"EMPTY-001":{"site":"MissAV","items":[]}}}`)
 
-	if _, ok := lookupOnlineRelated("EMPTY-001"); ok {
+	if _, ok := lookupOnlineRelated("EMPTY-001", false); ok {
 		t.Fatal("entries without items must be ignored")
 	}
-	if _, ok := lookupOnlineRelated("MISSING-001"); ok {
+	if _, ok := lookupOnlineRelated("MISSING-001", false); ok {
 		t.Fatal("unknown code must not resolve")
 	}
 }
@@ -97,11 +97,30 @@ func TestLookupOnlineRelatedPreservesItemOrder(t *testing.T) {
 		}
 	}`)
 
-	entry, ok := lookupOnlineRelated("pref-001")
+	entry, ok := lookupOnlineRelated("pref-001", false)
 	if !ok || len(entry.Items) != 2 {
 		t.Fatalf("lookup returned %+v (ok=%v), want 2 items", entry, ok)
 	}
 	if entry.Items[1].Title != "推荐二" {
 		t.Fatalf("item title = %q, want 推荐二", entry.Items[1].Title)
+	}
+}
+
+// The UI refresh must pick up a re-scraped file even when the stat throttle
+// would otherwise serve the cached copy for a few more seconds.
+func TestLookupOnlineRelatedForceReloadsFromDisk(t *testing.T) {
+	dir := useJavOnlineRelatedDir(t)
+	writeJavOnlineRelatedCache(t, dir, `{"entries":{"FORCE-001":{"site":"MissAV","items":[{"code":"FORCE-002"}]}}}`)
+	if _, ok := lookupOnlineRelated("FORCE-001", false); !ok {
+		t.Fatal("expected first read to succeed")
+	}
+
+	writeJavOnlineRelatedCache(t, dir, `{"entries":{"FORCE-001":{"site":"MissAV","items":[{"code":"FORCE-003"}]}}}`)
+	entry, ok := lookupOnlineRelated("FORCE-001", true)
+	if !ok {
+		t.Fatal("expected forced read to succeed")
+	}
+	if len(entry.Items) != 1 || entry.Items[0].Code != "FORCE-003" {
+		t.Fatalf("items = %+v, want the re-scraped FORCE-003 row", entry.Items)
 	}
 }

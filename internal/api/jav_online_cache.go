@@ -68,15 +68,16 @@ func javOnlineRelatedPath() string {
 
 // loadOnlineRelated refreshes the in-memory copy when the cache file changes on
 // disk. The cache never expires: it only changes when the operator re-runs the
-// scraping script, so rebuilds and redeploys keep serving the same data.
-func loadOnlineRelated() {
+// scraping script, so rebuilds and redeploys keep serving the same data. Callers
+// pass force to bypass the stat throttle, which is what the UI refresh uses.
+func loadOnlineRelated(force bool) {
 	path := javOnlineRelatedPath()
 	if path == "" {
 		return
 	}
 	now := time.Now()
 	javOnlineRelatedMu.Lock()
-	recent := javOnlineRelatedLoaded && now.Sub(javOnlineRelatedChecked) < javOnlineRelatedStatInterval
+	recent := !force && javOnlineRelatedLoaded && now.Sub(javOnlineRelatedChecked) < javOnlineRelatedStatInterval
 	javOnlineRelatedMu.Unlock()
 	if recent {
 		return
@@ -100,7 +101,7 @@ func loadOnlineRelated() {
 	}
 
 	javOnlineRelatedMu.Lock()
-	unchanged := javOnlineRelatedLoaded &&
+	unchanged := !force && javOnlineRelatedLoaded &&
 		info.ModTime().Equal(javOnlineRelatedModTime) &&
 		info.Size() == javOnlineRelatedSize
 	javOnlineRelatedMu.Unlock()
@@ -139,8 +140,8 @@ func loadOnlineRelated() {
 	logging.Info("loaded online related cache: %d codes", len(entries))
 }
 
-func lookupOnlineRelated(code string) (javOnlineRelatedEntry, bool) {
-	loadOnlineRelated()
+func lookupOnlineRelated(code string, force bool) (javOnlineRelatedEntry, bool) {
+	loadOnlineRelated(force)
 	key := strings.ToUpper(strings.TrimSpace(code))
 	if key == "" {
 		return javOnlineRelatedEntry{}, false
@@ -238,7 +239,7 @@ func respondOnlineRelated(c *gin.Context, entry javOnlineRelatedEntry, includeLo
 
 // onlineRelatedStatus reports cache freshness for the settings UI and scripts.
 func onlineRelatedStatus() (int, time.Time, string) {
-	loadOnlineRelated()
+	loadOnlineRelated(false)
 	javOnlineRelatedMu.Lock()
 	defer javOnlineRelatedMu.Unlock()
 	latest := time.Time{}

@@ -76,7 +76,6 @@ export default function JavCard(props) {
   const [similarAnchorEl, setSimilarAnchorEl] = useState(null)
   const [similarItems, setSimilarItems] = useState(null)
   const [similarJlRatings, setSimilarJlRatings] = useState({})
-  const [similarStale, setSimilarStale] = useState(false)
   const [similarNote, setSimilarNote] = useState('')
   const [similarIncludeLocal] = useSimilarIncludeLocal()
   const [similarLoading, setSimilarLoading] = useState(false)
@@ -153,7 +152,6 @@ export default function JavCard(props) {
         setSimilarError('')
         setSimilarLoading(false)
         setSimilarItems(cached.items)
-        setSimilarStale(cached.stale)
         setSimilarNote(cached.note || '')
         mergeJlRatings(cached.items, requestSeq)
         mergeExternalVideos(cached.items, requestSeq)
@@ -191,7 +189,6 @@ export default function JavCard(props) {
       }
       if (similarRequestRef.current !== requestSeq) return
       setSimilarItems(items)
-      setSimilarStale(stale)
       setSimilarNote(note)
       similarCacheRef.current.set(cacheKey, { items, stale, note })
       mergeJlRatings(items, requestSeq)
@@ -199,7 +196,6 @@ export default function JavCard(props) {
     } catch (error) {
       if (similarRequestRef.current !== requestSeq) return
       setSimilarItems([])
-      setSimilarStale(true)
       setSimilarError(getErrorMessage(error))
     } finally {
       if (timer) window.clearTimeout(timer)
@@ -893,17 +889,15 @@ export default function JavCard(props) {
                     {zh('相似推荐', 'Similar recommendations')}
                   </span>
                   <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-gray-400">
-                    {similarStale ? (
-                      <button
-                        type="button"
-                        className="flex items-center gap-0.5 text-blue-600 hover:underline disabled:opacity-50"
-                        disabled={similarLoading}
-                        onClick={() => loadSimilar(similarIncludeLocal, { refresh: true })}
-                      >
-                        <RefreshRoundedIcon sx={{ fontSize: 13 }} />
-                        {zh('刷新', 'Refresh')}
-                      </button>
-                    ) : null}
+                    <button
+                      type="button"
+                      className="flex items-center gap-0.5 text-blue-600 hover:underline disabled:opacity-50"
+                      disabled={similarLoading}
+                      onClick={() => loadSimilar(similarIncludeLocal, { refresh: true })}
+                    >
+                      <RefreshRoundedIcon sx={{ fontSize: 13 }} />
+                      {zh('刷新', 'Refresh')}
+                    </button>
                     <span>{zh('按评分排序', 'Sorted by rating')}</span>
                   </span>
                 </div>
@@ -914,7 +908,7 @@ export default function JavCard(props) {
                 ) : null}
                 {similarLoading ? (
                   <div className="px-1 py-3 text-center text-xs text-gray-500">
-                    {zh('正在从 JavDB 拉取推荐…', 'Loading recommendations from JavDB…')}
+                    {zh('正在加载推荐…', 'Loading recommendations…')}
                   </div>
                 ) : similarError ? (
                   <div className="px-1 py-3 text-center text-xs text-red-500">{similarError}</div>
