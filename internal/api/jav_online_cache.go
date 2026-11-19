@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -42,14 +43,19 @@ type javOnlineRelatedFile struct {
 
 const (
 	javOnlineRelatedStatInterval = 5 * time.Second
-	// The client pages through these candidates five at a time, so return the
-	// whole related batch instead of a single page.
-	javOnlineRelatedMaxItems = 20
+	// The client pages through candidates five at a time, so extra candidates
+	// mined from neighbouring batches are capped but still worth 4+ pages.
+	javOnlineRelatedExtraLimit = 20
 )
 
+// javOnlineRelatedIndex maps a library code to the related codes of its own
+// batch; javOnlineRelatedMeta keeps one row per known code so cross-film
+// expansion can still render covers and titles.
 var (
 	javOnlineRelatedMu      sync.Mutex
 	javOnlineRelatedEntries map[string]javOnlineRelatedEntry
+	javOnlineRelatedIndex   map[string][]string
+	javOnlineRelatedMeta    map[string]javOnlineRelatedItem
 	javOnlineRelatedModTime time.Time
 	javOnlineRelatedSize    int64
 	javOnlineRelatedChecked time.Time
@@ -125,15 +131,32 @@ func loadOnlineRelated(force bool) {
 		return
 	}
 	entries := make(map[string]javOnlineRelatedEntry, len(file.Entries))
+	index := make(map[string][]string, len(file.Entries))
+	meta := make(map[string]javOnlineRelatedItem, len(file.Entries)*8)
 	for code, entry := range file.Entries {
 		key := strings.ToUpper(strings.TrimSpace(code))
 		if key == "" || len(entry.Items) == 0 {
 			continue
 		}
 		entries[key] = entry
+		codes := make([]string, 0, len(entry.Items))
+		for _, item := range entry.Items {
+			related := strings.ToUpper(strings.TrimSpace(item.Code))
+			if related == "" {
+				continue
+			}
+			codes = append(codes, related)
+			if _, seen := meta[related]; !seen {
+				item.Code = related
+				meta[related] = item
+			}
+		}
+		index[key] = codes
 	}
 	javOnlineRelatedMu.Lock()
 	javOnlineRelatedEntries = entries
+	javOnlineRelatedIndex = index
+	javOnlineRelatedMeta = meta
 	javOnlineRelatedLoaded = true
 	javOnlineRelatedChecked = now
 	javOnlineRelatedModTime = info.ModTime()
@@ -157,25 +180,25 @@ func lookupOnlineRelated(code string, force bool) (javOnlineRelatedEntry, bool) 
 	return entry, true
 }
 
-// mapOnlineRelated turns cached online entries into recommendation rows,
+// mapOnlineRelatedRows turns cached online rows into recommendation rows,
 // enriching them with library metadata whenever the code exists locally.
-func mapOnlineRelated(ctx context.Context, entry javOnlineRelatedEntry) []javSimilarFreshItem {
-	codes := make([]string, 0, len(entry.Items))
-	for _, item := range entry.Items {
+func mapOnlineRelatedRows(ctx context.Context, rows []javOnlineRelatedItem) []javSimilarFreshItem {
+	codes := make([]string, 0, len(rows))
+	for _, item := range rows {
 		if code := strings.TrimSpace(item.Code); code != "" {
 			codes = append(codes, code)
 		}
 	}
 	byCode := map[string]dbpkg.JavCodeInfo{}
-	if rows, err := dbpkg.Default().ListJavsByCodes(ctx, codes); err != nil {
+	if locals, err := dbpkg.Default().ListJavsByCodes(ctx, codes); err != nil {
 		logging.Error("map online related codes: %v", err)
 	} else {
-		for _, row := range rows {
-			byCode[strings.ToUpper(strings.TrimSpace(row.Code))] = row
+		for _, local := range locals {
+			byCode[strings.ToUpper(strings.TrimSpace(local.Code))] = local
 		}
 	}
-	items := make([]javSimilarFreshItem, 0, len(entry.Items))
-	for _, item := range entry.Items {
+	items := make([]javSimilarFreshItem, 0, len(rows))
+	for _, item := range rows {
 		code := strings.TrimSpace(item.Code)
 		if code == "" {
 			continue
@@ -199,18 +222,133 @@ func mapOnlineRelated(ctx context.Context, entry javOnlineRelatedEntry) []javSim
 			}
 		}
 		items = append(items, row)
-		if len(items) >= javOnlineRelatedMaxItems {
-			break
-		}
 	}
 	return items
 }
 
+// expandOnlineRelated mines the related batches of neighbouring works for
+// extra candidates. A code recommended by several neighbours, and at a high
+// position inside each batch, is likely relevant to the source work too.
+// primarySeeds are the source's own related works, neighbourSeeds the library
+// works that resemble the source; both are ordered by relevance.
+func expandOnlineRelated(primarySeeds, neighbourSeeds []string, exclude map[string]bool, limit int) []javOnlineRelatedItem {
+	javOnlineRelatedMu.Lock()
+	index := javOnlineRelatedIndex
+	meta := javOnlineRelatedMeta
+	javOnlineRelatedMu.Unlock()
+
+	scores := make(map[string]float64, 64)
+	support := make(map[string]int, 64)
+	visited := make(map[string]bool, len(primarySeeds)+len(neighbourSeeds))
+	accumulate := func(seed string, weight float64) {
+		key := strings.ToUpper(strings.TrimSpace(seed))
+		if key == "" || visited[key] {
+			return
+		}
+		visited[key] = true
+		related := index[key]
+		if len(related) == 0 {
+			return
+		}
+		for position, candidate := range related {
+			if exclude[candidate] {
+				continue
+			}
+			scores[candidate] += weight / float64(position+2)
+			support[candidate]++
+		}
+	}
+	for rank, seed := range primarySeeds {
+		accumulate(seed, 1.0/float64(rank+2))
+	}
+	// Library neighbours matter, but less than the source's own related works.
+	for rank, seed := range neighbourSeeds {
+		accumulate(seed, 0.6/float64(rank+2))
+	}
+
+	type rankedCandidate struct {
+		code  string
+		score float64
+	}
+	// Candidates recommended by two or more neighbours lead; single hits only
+	// fill the remaining slots, since one neighbour alone is a weak signal.
+	strong := make([]rankedCandidate, 0, len(scores))
+	weak := make([]rankedCandidate, 0, len(scores))
+	for code, score := range scores {
+		if support[code] >= 2 {
+			strong = append(strong, rankedCandidate{code: code, score: score})
+			continue
+		}
+		weak = append(weak, rankedCandidate{code: code, score: score})
+	}
+	byScore := func(list []rankedCandidate) {
+		sort.Slice(list, func(left, right int) bool {
+			if list[left].score != list[right].score {
+				return list[left].score > list[right].score
+			}
+			return list[left].code < list[right].code
+		})
+	}
+	byScore(strong)
+	byScore(weak)
+	ranked := append(strong, weak...)
+	if limit > 0 && len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	out := make([]javOnlineRelatedItem, 0, len(ranked))
+	for _, row := range ranked {
+		item, ok := meta[row.code]
+		if !ok {
+			item = javOnlineRelatedItem{Code: row.code}
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
 // respondOnlineRelated serves recommendations straight from the persistent
-// on-disk cache, so no upstream request happens at click time. It reports
-// whether a response was written.
-func respondOnlineRelated(c *gin.Context, entry javOnlineRelatedEntry, includeLocal bool) bool {
-	items := mapOnlineRelated(c.Request.Context(), entry)
+// on-disk cache, so no upstream request happens at click time. Besides the
+// batch of the source itself it appends candidates mined from neighbouring
+// batches, which gives the client more pages to rotate through.
+func respondOnlineRelated(c *gin.Context, sourceID int64, sourceCode string, entry javOnlineRelatedEntry, includeLocal bool) bool {
+	primary := entry.Items
+	exclude := make(map[string]bool, len(primary)+1)
+	if code := strings.ToUpper(strings.TrimSpace(sourceCode)); code != "" {
+		exclude[code] = true
+	}
+	primarySeeds := make([]string, 0, len(primary))
+	for _, item := range primary {
+		code := strings.ToUpper(strings.TrimSpace(item.Code))
+		if code == "" {
+			continue
+		}
+		exclude[code] = true
+		primarySeeds = append(primarySeeds, code)
+	}
+	var neighbourSeeds []string
+	if sourceID > 0 {
+		if neighbours, err := dbpkg.Default().ListSimilarJavs(c.Request.Context(), sourceID, 20, true); err != nil {
+			logging.Error("list neighbour javs for online related id=%d: %v", sourceID, err)
+		} else {
+			neighbourSeeds = make([]string, 0, len(neighbours))
+			for _, neighbour := range neighbours {
+				neighbourSeeds = append(neighbourSeeds, neighbour.Code)
+			}
+		}
+	}
+	rows := make([]javOnlineRelatedItem, 0, len(primary)+javOnlineRelatedExtraLimit)
+	rows = append(rows, primary...)
+	extra := expandOnlineRelated(primarySeeds, neighbourSeeds, exclude, javOnlineRelatedExtraLimit)
+	for _, item := range extra {
+		if code := strings.ToUpper(strings.TrimSpace(item.Code)); code != "" {
+			if exclude[code] {
+				continue
+			}
+			exclude[code] = true
+		}
+		rows = append(rows, item)
+	}
+	items := mapOnlineRelatedRows(c.Request.Context(), rows)
 	if !includeLocal {
 		filtered := make([]javSimilarFreshItem, 0, len(items))
 		for _, item := range items {

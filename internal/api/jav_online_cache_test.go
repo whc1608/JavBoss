@@ -12,6 +12,8 @@ import (
 func resetJavOnlineRelatedCacheForTest() {
 	javOnlineRelatedMu.Lock()
 	javOnlineRelatedEntries = nil
+	javOnlineRelatedIndex = nil
+	javOnlineRelatedMeta = nil
 	javOnlineRelatedLoaded = false
 	javOnlineRelatedChecked = time.Time{}
 	javOnlineRelatedModTime = time.Time{}
@@ -103,6 +105,71 @@ func TestLookupOnlineRelatedPreservesItemOrder(t *testing.T) {
 	}
 	if entry.Items[1].Title != "推荐二" {
 		t.Fatalf("item title = %q, want 推荐二", entry.Items[1].Title)
+	}
+}
+
+func TestExpandOnlineRelatedMinesNeighbourBatches(t *testing.T) {
+	resetJavOnlineRelatedCacheForTest()
+	t.Cleanup(resetJavOnlineRelatedCacheForTest)
+	javOnlineRelatedMu.Lock()
+	javOnlineRelatedIndex = map[string][]string{
+		"AAA-001": {"BBB-001", "CCC-001"},
+		"AAA-002": {"BBB-001", "DDD-001"},
+		"AAA-003": {"CCC-001", "DDD-001"},
+	}
+	javOnlineRelatedMeta = map[string]javOnlineRelatedItem{
+		"BBB-001": {Code: "BBB-001", Title: "B"},
+		"CCC-001": {Code: "CCC-001", Title: "C"},
+		"DDD-001": {Code: "DDD-001", Title: "D"},
+	}
+	javOnlineRelatedMu.Unlock()
+
+	got := expandOnlineRelated([]string{"AAA-001", "AAA-002", "AAA-003"}, nil, map[string]bool{}, 10)
+	if len(got) != 3 {
+		t.Fatalf("expanded rows = %+v, want 3 candidates", got)
+	}
+	// BBB-001 is recommended by the two highest ranked seeds, so it must lead.
+	wantOrder := []string{"BBB-001", "CCC-001", "DDD-001"}
+	for index, want := range wantOrder {
+		if got[index].Code != want {
+			t.Fatalf("row %d = %q, want %q (full %+v)", index, got[index].Code, want, got)
+		}
+	}
+	if got[0].Title != "B" {
+		t.Fatalf("expanded row lost metadata: %+v", got[0])
+	}
+
+	excluded := expandOnlineRelated([]string{"AAA-001", "AAA-002", "AAA-003"}, nil, map[string]bool{"BBB-001": true}, 10)
+	for _, row := range excluded {
+		if row.Code == "BBB-001" {
+			t.Fatal("excluded code must not be expanded")
+		}
+	}
+}
+
+// Candidates backed by a single neighbour only fill the remaining slots and
+// must never outrank candidates recommended by several neighbours.
+func TestExpandOnlineRelatedRanksWeakCandidatesLast(t *testing.T) {
+	resetJavOnlineRelatedCacheForTest()
+	t.Cleanup(resetJavOnlineRelatedCacheForTest)
+	javOnlineRelatedMu.Lock()
+	javOnlineRelatedIndex = map[string][]string{
+		"AAA-001": {"STRONG-001"},
+		"AAA-002": {"STRONG-001"},
+		"AAA-003": {"WEAK-001"},
+	}
+	javOnlineRelatedMeta = map[string]javOnlineRelatedItem{
+		"STRONG-001": {Code: "STRONG-001"},
+		"WEAK-001":   {Code: "WEAK-001"},
+	}
+	javOnlineRelatedMu.Unlock()
+
+	got := expandOnlineRelated([]string{"AAA-001", "AAA-002", "AAA-003"}, nil, map[string]bool{}, 10)
+	if len(got) != 2 {
+		t.Fatalf("expanded rows = %+v, want strong and weak candidates", got)
+	}
+	if got[0].Code != "STRONG-001" || got[1].Code != "WEAK-001" {
+		t.Fatalf("order = [%s %s], want [STRONG-001 WEAK-001]", got[0].Code, got[1].Code)
 	}
 }
 

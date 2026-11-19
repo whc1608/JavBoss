@@ -483,7 +483,7 @@ func listSimilarJavsFresh(c *gin.Context) {
 	// forces a re-read from disk so a freshly scraped file takes effect
 	// without restarting the server.
 	if entry, ok := lookupOnlineRelated(source.Code, refresh); ok {
-		if respondOnlineRelated(c, entry, includeLocal) {
+		if respondOnlineRelated(c, id, source.Code, entry, includeLocal) {
 			return
 		}
 	}
