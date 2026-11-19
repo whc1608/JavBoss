@@ -42,7 +42,9 @@ type javOnlineRelatedFile struct {
 
 const (
 	javOnlineRelatedStatInterval = 5 * time.Second
-	javOnlineRelatedMaxItems     = 8
+	// The client pages through these candidates five at a time, so return the
+	// whole related batch instead of a single page.
+	javOnlineRelatedMaxItems = 20
 )
 
 var (
@@ -222,11 +224,9 @@ func respondOnlineRelated(c *gin.Context, entry javOnlineRelatedEntry, includeLo
 	if len(items) == 0 {
 		return false
 	}
-	if len(items) > 5 {
-		items = items[:5]
-	}
 	c.JSON(http.StatusOK, gin.H{
 		"items":      items,
+		"total":      len(items),
 		"stale":      false,
 		"cached":     true,
 		"source":     "online",

@@ -1,4 +1,4 @@
-import { useContext, useMemo, useRef, useState } from 'react'
+import { useContext, useEffect, useMemo, useRef, useState } from 'react'
 import Tooltip from '@/shared/ui/Tooltip'
 import CropRoundedIcon from '@mui/icons-material/CropRounded'
 import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded'
@@ -25,6 +25,7 @@ import StarRoundedIcon from '@mui/icons-material/StarRounded'
 import StarBorderRoundedIcon from '@mui/icons-material/StarBorderRounded'
 import SearchIcon from '@mui/icons-material/Search'
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded'
+import RestartAltRoundedIcon from '@mui/icons-material/RestartAltRounded'
 import PortraitOutlinedIcon from '@mui/icons-material/PortraitOutlined'
 import PhotoLibraryOutlinedIcon from '@mui/icons-material/PhotoLibraryOutlined'
 import { ReleaseIcon, DurationIcon } from '@/features/jav/components/JavMetadataIcons'
@@ -49,6 +50,8 @@ function similarDayKey() {
   const now = new Date()
   return `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`
 }
+
+const similarBatchSize = 5
 
 export default function JavCard(props) {
   const { portrait = false, highSaturationTags = true } = props
@@ -77,6 +80,7 @@ export default function JavCard(props) {
   const [similarItems, setSimilarItems] = useState(null)
   const [similarJlRatings, setSimilarJlRatings] = useState({})
   const [similarNote, setSimilarNote] = useState('')
+  const [similarPage, setSimilarPage] = useState(0)
   const [similarIncludeLocal] = useSimilarIncludeLocal()
   const [similarLoading, setSimilarLoading] = useState(false)
   const [similarError, setSimilarError] = useState('')
@@ -213,7 +217,7 @@ export default function JavCard(props) {
     if (similarLoading) return
     await loadSimilar(similarIncludeLocal)
   }
-  const similarDisplayItems = useMemo(() => {
+  const similarSortedItems = useMemo(() => {
     const list = Array.isArray(similarItems) ? [...similarItems] : []
     const ratingOf = (row) => {
       const jlRating = similarJlRatings[normalizeRatingCode(row?.code)]
@@ -226,6 +230,27 @@ export default function JavCard(props) {
         (Number(right?.favorite_rating) || 0) - (Number(left?.favorite_rating) || 0)
     )
   }, [similarItems, similarJlRatings])
+  // Recommendation rows page five at a time; reaching the end wraps around so
+  // "refresh" never dead-ends on a short last page.
+  const similarPageCount = Math.max(1, Math.ceil(similarSortedItems.length / similarBatchSize))
+  const similarDisplayItems = useMemo(() => {
+    const total = similarSortedItems.length
+    if (!total) return []
+    const start = ((similarPage % similarPageCount) * similarBatchSize) % total
+    const size = Math.min(similarBatchSize, total)
+    const rows = []
+    for (let index = 0; index < size; index += 1) {
+      rows.push(similarSortedItems[(start + index) % total])
+    }
+    return rows
+  }, [similarSortedItems, similarPage, similarPageCount])
+  const handleNextSimilarBatch = () => {
+    if (similarLoading || similarPageCount <= 1) return
+    setSimilarPage((page) => (page + 1) % similarPageCount)
+  }
+  useEffect(() => {
+    setSimilarPage(0)
+  }, [similarItems])
   const coverButtonSizeClassName = portrait ? 'h-7 w-7' : 'h-8 w-8'
   const coverSmallButtonSizeClassName = portrait ? 'h-6 w-6' : 'h-7 w-7'
   const favoriteRatingIconSize = portrait ? 18 : 21
@@ -888,17 +913,32 @@ export default function JavCard(props) {
                   <span className="shrink-0 text-xs font-semibold text-gray-600">
                     {zh('相似推荐', 'Similar recommendations')}
                   </span>
-                  <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-gray-400">
+                  <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] text-gray-400">
+                    {similarPage > 0 ? (
+                      <button
+                        type="button"
+                        className="flex items-center gap-0.5 text-blue-600 hover:underline disabled:opacity-50"
+                        disabled={similarLoading}
+                        onClick={() => setSimilarPage(0)}
+                      >
+                        <RestartAltRoundedIcon sx={{ fontSize: 13 }} />
+                        {zh('还原', 'Reset')}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="flex items-center gap-0.5 text-blue-600 hover:underline disabled:opacity-50"
-                      disabled={similarLoading}
-                      onClick={() => loadSimilar(similarIncludeLocal, { refresh: true })}
+                      disabled={similarLoading || similarPageCount <= 1}
+                      onClick={handleNextSimilarBatch}
                     >
                       <RefreshRoundedIcon sx={{ fontSize: 13 }} />
                       {zh('刷新', 'Refresh')}
                     </button>
-                    <span>{zh('按评分排序', 'Sorted by rating')}</span>
+                    {similarPageCount > 1 ? (
+                      <span className="tabular-nums">
+                        {similarPage + 1}/{similarPageCount}
+                      </span>
+                    ) : null}
                   </span>
                 </div>
                 {similarNote ? (
@@ -914,7 +954,7 @@ export default function JavCard(props) {
                   <div className="px-1 py-3 text-center text-xs text-red-500">{similarError}</div>
                 ) : similarDisplayItems.length > 0 ? (
                   <div className="flex flex-col">
-                    {similarDisplayItems.map((row) => {
+                    {similarDisplayItems.map((row, rowIndex) => {
                       const encodedCode = row.code ? encodeURIComponent(row.code.trim()) : ''
                       const javdbHref = encodedCode
                         ? `https://javdb.com/search?q=${encodedCode}&f=all`
@@ -973,7 +1013,7 @@ export default function JavCard(props) {
                       }
                       return (
                         <div
-                          key={row.id || row.code}
+                          key={`${row.id || row.code || 'row'}-${rowIndex}`}
                           role="button"
                           tabIndex={0}
                           className="card-modal-trigger flex w-full cursor-pointer items-center gap-2 rounded-md p-1.5 text-left transition hover:bg-gray-50"
