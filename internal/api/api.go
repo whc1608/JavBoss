@@ -154,6 +154,7 @@ func RegisterRoutes(router gin.IRoutes) {
 	router.GET("/jav/items/:id", getJavItem)
 	router.GET("/jav/items/:id/similar", listSimilarJavs)
 	router.GET("/jav/items/:id/similar-fresh", listSimilarJavsFresh)
+	router.GET("/jav/online-related/status", getJavOnlineRelatedStatus)
 	router.POST("/jav/by-code", resolveJavByCode)
 	router.GET("/jav/items/:id/online-stream", getJavOnlineStream)
 	router.PUT("/jav/items/:id", updateJavItem)

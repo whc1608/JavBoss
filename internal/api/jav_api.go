@@ -404,6 +404,9 @@ type javSimilarFreshItem struct {
 	FavoriteRating float64 `json:"favorite_rating"`
 	CoverURL       string  `json:"cover_url"`
 	Local          bool    `json:"local"`
+	// External marks rows that only exist on the online site; the client opens
+	// them through /jav/by-code because they have no library id.
+	External bool `json:"external,omitempty"`
 }
 
 type javSimilarFreshEntry struct {
@@ -503,6 +506,15 @@ func listSimilarJavsFresh(c *gin.Context) {
 	if strings.TrimSpace(source.Code) == "" {
 		respondLocalizedError(c, http.StatusBadRequest, "该作品缺少番号", "This JAV item has no code")
 		return
+	}
+
+	// The operator-scraped cache is the preferred source: it is built from a
+	// logged-in browser session, never expires, and keeps working after
+	// rebuilds. JavDB is only a fallback when a code was never scraped.
+	if entry, ok := lookupOnlineRelated(source.Code); ok {
+		if respondOnlineRelated(c, entry, includeLocal) {
+			return
+		}
 	}
 
 	day := time.Now().Format("2006-01-02")
