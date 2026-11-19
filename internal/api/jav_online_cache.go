@@ -47,7 +47,7 @@ const (
 
 var (
 	javOnlineRelatedMu      sync.Mutex
-	javOnlineRelatedEntries = map[string]javOnlineRelatedEntry{}
+	javOnlineRelatedEntries map[string]javOnlineRelatedEntry
 	javOnlineRelatedModTime time.Time
 	javOnlineRelatedSize    int64
 	javOnlineRelatedChecked time.Time
