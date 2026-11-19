@@ -4,7 +4,13 @@
 // 依赖一台带 Cloudflare 通行态的 Chrome（脚本可自动拉起），通过 CDP 驱动。
 // 用法：
 //   node scripts/online-related/fetch-online-related.mjs --db <javboss.db> --out <json>
-// 常用参数：--limit 20 --interval 2500 --site missav --cdp http://127.0.0.1:9222
+// 常用参数：
+//   --limit 20        只抓前 N 部（默认全部）
+//   --code ADN-778    只抓指定番号，逗号分隔
+//   --interval 2500   每部之间的间隔毫秒数，调大可降频防风控
+//   --refresh         忽略已有缓存重新抓取（默认断点续抓）
+//   --headless        无头运行；这些站点的 Cloudflare 通常只接受已通过验证的有头窗口
+//   --site missav --cdp http://127.0.0.1:9222 --proxy http://127.0.0.1:7897
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
@@ -87,9 +93,12 @@ async function ensureChrome() {
     '--no-default-browser-check',
     '--disable-blink-features=AutomationControlled',
   ]
+  // Headless keeps the run invisible, but Cloudflare on these sites usually
+  // only accepts a headful window that has already passed the challenge once.
+  if (args.headless) chromeArgs.push('--headless=new', '--window-size=1400,1000')
   if (args.proxy) chromeArgs.push(`--proxy-server=${args.proxy}`)
   chromeArgs.push('about:blank')
-  log(`启动浏览器: ${exe}`)
+  log(`启动浏览器: ${exe}${args.headless ? ' (headless)' : ''}`)
   spawn(exe, chromeArgs, { detached: true, stdio: 'ignore' }).unref()
   for (let i = 0; i < 40; i += 1) {
     await sleep(500)
@@ -190,6 +199,10 @@ async function waitForCards(cdp, timeoutMs = 25000) {
     )
     last = JSON.parse(state || '{}')
     if (last.ready === 'complete' && last.withAlt >= 3 && last.withTitle >= 3) return last
+    // Cloudflare interstitial: stop early instead of hammering the site.
+    if (/安全验证|Just a moment|Enable JavaScript and cookies|checking your browser|cf-browser-verification/i.test(last.body || '')) {
+      return { ...last, blocked: true }
+    }
     if (last.ready === 'complete' && /404|找不到|not found|Page not found/i.test(last.body || '')) {
       return last
     }
@@ -239,6 +252,9 @@ async function fetchOne(cdp, code) {
   const url = site.pageUrl(code, locale)
   await cdp.send('Page.navigate', { url })
   const state = await waitForCards(cdp)
+  if (state.blocked) {
+    return { ok: false, blocked: true, reason: 'cloudflare challenge', body: (state.body || '').slice(0, 120) }
+  }
   if (!state.cards) {
     return { ok: false, reason: `no cards (ready=${state.ready})`, body: (state.body || '').slice(0, 120) }
   }
@@ -306,6 +322,7 @@ async function main() {
   const { cdp, target } = await openTab()
   let done = 0
   let failed = 0
+  let blockedStreak = 0
   try {
     for (const code of codes) {
       if (cache.entries[code] && cache.entries[code].items && !args.refresh) {
@@ -317,7 +334,20 @@ async function main() {
         if (!result.ok) {
           failed += 1
           log(`✗ ${code} ${result.reason} ${result.body || ''}`)
+          if (result.blocked) {
+            blockedStreak += 1
+            if (blockedStreak >= 6) {
+              log('连续 6 次被 Cloudflare 拦截，停止抓取；请手动在窗口里通过一次验证后重跑')
+              break
+            }
+            const backoff = Math.min(120000, 20000 * blockedStreak)
+            log(`检测到验证页，等待 ${Math.round(backoff / 1000)}s 后重试`)
+            await sleep(backoff)
+          } else {
+            blockedStreak = 0
+          }
         } else {
+          blockedStreak = 0
           cache.entries[code] = {
             site: site.label,
             fetched_at: new Date().toISOString(),
